@@ -1,6 +1,7 @@
 #### 畅看项目(Cwatch)
 
-
+自用项目。
+本项目用于gin以及相关中间件的巩固学习。本项目是一个视频相关Web项目，涉及功能：注册登录，视频上传，点赞评论等功能
 
 go1.24.9 
 
@@ -12,6 +13,10 @@ RabbitMQ3.11-management
 
 Nginx1.28
 
+MinIO
+
+Docker
+
 
 
 **项目架构**
@@ -20,13 +25,13 @@ Nginx1.28
 
 /backend
   /controllers
-  /routes
+  /routes      
   /models      # 数据结构
   /service    # 业务层
-  /middlewares # jwt, logging, recover
-  /utils      # id生成、时间、错误码
+  /middlewares # jwt
+  /utils      # mysql,redis,minio,token,bcrypt
   main.go
-/web          # 前端静态页面（简单 HTML/JS 或 Vue/React 打包产物）
+/web          # 前端页面（简单 HTML/JS/CSS）
   /js
   /css
 
@@ -35,7 +40,7 @@ README.md
 
 ```
 
-**每日计划**
+**每日计划（可酌情进行适当调整）**
 "第1天：项目设置与需求分析
 确定项目的基本功能需求：视频上传、播放、点赞、评论、用户注册登录等。
 创建项目结构，配置Go、Gin、MySQL、Redis、RabbitMQ等相关环境。
