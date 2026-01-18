@@ -686,10 +686,9 @@ async function likeVideo(videoData) {
         
         // 更新本地数据
         videoData.likes = result.like_count;
-        videoData.isLiked = result.is_liked; // 保存点赞状态
         
-        // 更新所有显示该视频点赞数和状态的地方
-        updateVideoLikeCount(videoData.id, result.like_count, result.is_liked);
+        // 更新所有显示该视频点赞数的地方
+        updateVideoLikeCount(videoData.id, result.like_count);
         
         // 显示提示
         toast(result.message);
@@ -703,22 +702,12 @@ async function likeVideo(videoData) {
 }
 
 // 更新视频点赞数显示
-function updateVideoLikeCount(videoId, likeCount, isLiked) {
-    // 更新播放页面的点赞数和按钮状态
+function updateVideoLikeCount(videoId, likeCount) {
+    // 更新播放页面的点赞数
     const feedItem = $(`.feed-item[data-video-id="${videoId}"]`);
     if (feedItem) {
         const countEl = $('[data-count="likes"]', feedItem);
         if (countEl) countEl.textContent = formatCount(likeCount);
-        
-        // 更新点赞按钮状态
-        const likeBtn = $('[data-action="like"]', feedItem);
-        if (likeBtn) {
-            if (isLiked) {
-                likeBtn.classList.add('video-action--liked');
-            } else {
-                likeBtn.classList.remove('video-action--liked');
-            }
-        }
     }
     
     // 更新预览页面的点赞数
@@ -1204,16 +1193,61 @@ function setupScrollLoadMore() {
 // 更新头像 UI
 function updateAvatarUI(){
     if (state.isLoggedIn && state.currentUser) {
-        // 如果用户有头像URL，显示图片；否则显示用户名首字母
-        if (state.currentUser.avatar_url) {
-            el.avatar.innerHTML = `<img src="${escapeHtml(state.currentUser.avatar_url)}" alt="头像" style="width: 100%; height: 100%; object-fit: cover; border-radius: 14px;">`;
-        } else {
+        console.log("更新头像UI - 用户信息:", state.currentUser);
+        console.log("avatar_url:", state.currentUser.avatar_url);
+        
+        // 清空之前的内容
+        el.avatar.innerHTML = '';
+        
+        // 如果用户有头像URL且不为空，显示图片；否则显示用户名首字母
+        if (state.currentUser.avatar_url && state.currentUser.avatar_url.trim() !== '') {
+            console.log("开始加载头像图片:", state.currentUser.avatar_url);
+            
+            // 先显示加载中的占位符（用户名首字母）
             el.avatar.textContent = state.currentUser.username.slice(0, 1).toUpperCase();
+            el.avatar.style.opacity = '0.5';
+            
+            // 创建图片元素
+            const img = document.createElement('img');
+            img.alt = '头像';
+            img.style.width = '100%';
+            img.style.height = '100%';
+            img.style.objectFit = 'cover';
+            img.style.borderRadius = '14px';
+            img.style.display = 'none'; // 先隐藏，加载成功后再显示
+            
+            // 图片加载成功
+            img.onload = () => {
+                console.log("头像图片加载成功");
+                el.avatar.innerHTML = '';
+                el.avatar.style.opacity = '1';
+                img.style.display = 'block';
+                el.avatar.appendChild(img);
+            };
+            
+            // 图片加载失败时保持显示用户名首字母
+            img.onerror = () => {
+                console.log("头像图片加载失败，保持显示用户名首字母");
+                el.avatar.style.opacity = '1';
+                // 不需要做任何事，因为已经显示了用户名首字母
+            };
+            
+            // 开始加载图片
+            img.src = state.currentUser.avatar_url;
+            
+        } else {
+            console.log("没有头像URL，显示用户名首字母");
+            el.avatar.textContent = state.currentUser.username.slice(0, 1).toUpperCase();
+            el.avatar.style.opacity = '1';
         }
+        
         el.avatar.classList.add("avatar--logged-in");
         el.avatar.title = `${state.currentUser.username} - 点击查看菜单`;
     } else {
+        console.log("未登录，显示默认头像");
+        el.avatar.innerHTML = '';
         el.avatar.textContent = "U";
+        el.avatar.style.opacity = '1';
         el.avatar.classList.remove("avatar--logged-in");
         el.avatar.title = "用户头像（占位）";
     }
@@ -1261,11 +1295,40 @@ el.loginForm.addEventListener("submit", async (e) => {
             throw new Error(data.error || "登录失败");
         }
         
-        // 登录成功，保存 token 和用户信息
-        state.currentUser = data.user;
-        state.isLoggedIn = true;
+        // 登录成功，保存 token
         localStorage.setItem("cwatchToken", data.token);
-        localStorage.setItem("cwatchUser", JSON.stringify(data.user));
+        
+        // 调用获取用户信息接口，获取完整的用户信息（包括头像）
+        try {
+            const userInfoRes = await fetch("http://localhost:5000/api/user/info", {
+                method: "GET",
+                headers: {
+                    "Authorization": `Bearer ${data.token}`
+                }
+            });
+            
+            if (userInfoRes.ok) {
+                const userInfoData = await userInfoRes.json();
+                state.currentUser = userInfoData.user;
+                state.isLoggedIn = true;
+                localStorage.setItem("cwatchUser", JSON.stringify(userInfoData.user));
+                console.log("获取用户信息成功:", userInfoData.user);
+
+
+            } else {
+                // 如果获取用户信息失败，使用登录接口返回的用户信息
+                state.currentUser = data.user;
+                state.isLoggedIn = true;
+                localStorage.setItem("cwatchUser", JSON.stringify(data.user));
+                console.log("使用登录返回的用户信息:", data.user);
+            }
+        } catch (err) {
+            // 如果获取用户信息失败，使用登录接口返回的用户信息
+            state.currentUser = data.user;
+            state.isLoggedIn = true;
+            localStorage.setItem("cwatchUser", JSON.stringify(data.user));
+            console.log("获取用户信息失败，使用登录返回的信息:", err);
+        }
         
         // 先隐藏登录页面
         hideAuthPage();

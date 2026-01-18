@@ -9,7 +9,7 @@ type User struct {
 	gorm.Model                                                                                                           // 包含ID、CreatedAt、UpdatedAt、DeletedAt字段
 	Username  string `gorm:"unique;not null" json:"username"`                                                            // 用户名，唯一且不能为空
 	Password  string `gorm:"not null" json:"-"`                                                                          // 密码，不能为空，json序列化时忽略
-	AvatarURL string `gorm:"default:'https://i0.hdslb.com/bfs/static/jinkela/long/images/live.gif'" json:"avatar_url"` // 头像URL
+	AvatarURL string `gorm:"default:'http://101.132.25.34:9000/cwatch/c.png'" json:"avatar_url"` // 头像URL
 	Email     string `json:"email"`
 	Phone     string `json:"phone"`
 }

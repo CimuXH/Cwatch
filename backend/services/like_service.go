@@ -5,7 +5,6 @@ import (
 	"backend/utils"
 	"errors"
 	"fmt"
-	"log"
 )
 
 // LikeService 点赞服务层
