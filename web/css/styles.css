@@ -626,6 +626,34 @@ body{
     color: rgba(255,255,255,0.5);
     font-size: 12px;
 }
+.comment__meta span {
+    cursor: default;
+}
+.comment__delete {
+    color: var(--danger);
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+}
+.comment__delete:hover {
+    opacity: 0.8;
+}
+.comment__content {
+    flex: 1;
+}
+.comment-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: rgba(255,255,255,0.5);
+}
+.comment-empty p:first-child {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+.comment-empty p:last-child {
+    font-size: 13px;
+    margin-top: 0;
+}
 
 .share-grid{
     display: grid;

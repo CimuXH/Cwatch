@@ -13,9 +13,10 @@ func SetupRoutes(router *gin.Engine) {
 
 	// 公开路由（不需要认证）
 	{
-		api.POST("/register", controllers.Register) // 注册
-		api.POST("/login", controllers.Login)       // 登录
-		api.GET("/videos", controllers.GetVideoList) // 获取视频列表（公开）
+		api.POST("/register", controllers.Register)      // 注册
+		api.POST("/login", controllers.Login)            // 登录
+		api.GET("/videos", controllers.GetVideoList)     // 获取视频列表（公开）
+		api.GET("/video/:videoid/comments", controllers.GetComments) // 获取视频评论（公开）
 	}
 
 	// 需要认证的路由
@@ -34,5 +35,9 @@ func SetupRoutes(router *gin.Engine) {
 		protected.POST("/video/like", controllers.AddLike)           // 点赞视频
 		protected.DELETE("/video/like", controllers.RemoveLike)      // 取消点赞
 		protected.POST("/video/toggle-like", controllers.ToggleLike) // 切换点赞状态（推荐）
+
+		// 评论相关路由
+		protected.POST("/video/comment/:videoid", controllers.AddComment) // 添加评论
+		protected.DELETE("/video/comment/:commentid", controllers.DeleteComment) // 删除评论
 	}
 }

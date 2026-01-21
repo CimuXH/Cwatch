@@ -267,6 +267,9 @@ async function fetchVideoList(page = 1, append = false) {
         
         const data = await res.json();
         
+        // 从 localStorage 获取点赞状态
+        const likedVideos = getLikedVideosFromStorage();
+        
         // 转换服务器数据格式为前端格式
         const serverVideos = (data.videos || []).map(v => ({
             id: `server_${v.id}`,
@@ -280,6 +283,7 @@ async function fetchVideoList(page = 1, append = false) {
             thumbText: "▶",
             coverUrl: v.cover_url,
             commentItems: [],
+            isLiked: likedVideos.includes(v.id), // 从本地存储恢复点赞状态
         }));
         
         if (append) {
@@ -311,6 +315,46 @@ async function fetchVideoList(page = 1, append = false) {
         }
     } finally {
         state.isLoadingVideos = false;
+    }
+}
+
+// 从 localStorage 获取已点赞的视频ID列表
+function getLikedVideosFromStorage() {
+    try {
+        const username = state.currentUser?.username;
+        if (!username) return [];
+        
+        const key = `likedVideos_${username}`;
+        const stored = localStorage.getItem(key);
+        return stored ? JSON.parse(stored) : [];
+    } catch (err) {
+        console.error("获取点赞状态失败:", err);
+        return [];
+    }
+}
+
+// 保存点赞状态到 localStorage
+function saveLikedVideoToStorage(videoId, isLiked) {
+    try {
+        const username = state.currentUser?.username;
+        if (!username) return;
+        
+        const key = `likedVideos_${username}`;
+        let likedVideos = getLikedVideosFromStorage();
+        
+        if (isLiked) {
+            // 添加到点赞列表
+            if (!likedVideos.includes(videoId)) {
+                likedVideos.push(videoId);
+            }
+        } else {
+            // 从点赞列表移除
+            likedVideos = likedVideos.filter(id => id !== videoId);
+        }
+        
+        localStorage.setItem(key, JSON.stringify(likedVideos));
+    } catch (err) {
+        console.error("保存点赞状态失败:", err);
     }
 }
 
@@ -409,7 +453,7 @@ function createFeedItem(videoData, index){
 
     item.innerHTML = `
     <div class="video-card">
-      <video class="video-media" playsinline muted preload="metadata" loop>
+      <video class="video-media" playsinline preload="metadata" loop>
         <source src="${videoData.src}">
         你的浏览器不支持 video 标签
       </video>
@@ -519,6 +563,12 @@ function createFeedItem(videoData, index){
             iconEl.innerHTML = iconSvg(videoEl.muted ? "muted" : "sound");
         }
     }
+    
+    // 初始化点赞按钮状态
+    const likeBtn = item.querySelector('[data-action="like"]');
+    if (likeBtn && videoData.isLiked) {
+        likeBtn.classList.add('video-action--liked');
+    }
 
     return item;
 }
@@ -581,20 +631,6 @@ function togglePlay(videoEl){
     const pauseIcon = feedItem?.querySelector('.video-pause-icon');
     
     if (videoEl.paused) {
-        // 用户主动点击播放时，取消静音（如果之前是自动播放设置的静音）
-        if (videoEl.muted) {
-            videoEl.muted = false;
-            
-            // 更新声音按钮图标
-            const feedItem = videoEl.closest('.feed-item');
-            const muteBtn = feedItem?.querySelector('[data-action="mute"]');
-            if (muteBtn) {
-                const iconEl = muteBtn.querySelector('.video-action__icon');
-                if (iconEl) {
-                    iconEl.innerHTML = iconSvg("sound");
-                }
-            }
-        }
         videoEl.play().catch(() => toast("播放被浏览器拦截：请尝试保持静音或手动允许播放"));
         if (pauseIcon) pauseIcon.classList.remove('video-pause-icon--visible');
     } else {
@@ -610,15 +646,15 @@ function autoPlayCurrentVideo(){
     const feedItem = state.currentVideoEl.closest('.feed-item');
     const pauseIcon = feedItem?.querySelector('.video-pause-icon');
     
-    // 确保视频是静音的（避免浏览器阻止自动播放）
-    state.currentVideoEl.muted = true;
+    // 默认不静音，直接播放
+    state.currentVideoEl.muted = false;
     
-    // 更新声音按钮图标为静音状态
+    // 更新声音按钮图标为有声音状态
     const muteBtn = feedItem?.querySelector('[data-action="mute"]');
     if (muteBtn) {
         const iconEl = muteBtn.querySelector('.video-action__icon');
         if (iconEl) {
-            iconEl.innerHTML = iconSvg("muted");
+            iconEl.innerHTML = iconSvg("sound");
         }
     }
     
@@ -628,9 +664,22 @@ function autoPlayCurrentVideo(){
         if (pauseIcon) pauseIcon.classList.remove('video-pause-icon--visible');
     }).catch((error) => {
         console.log("自动播放被阻止:", error);
-        // 显示暂停图标，提示用户手动播放
-        if (pauseIcon) pauseIcon.classList.add('video-pause-icon--visible');
-        toast("点击视频开始播放");
+        // 如果浏览器阻止了有声音的自动播放，尝试静音播放
+        state.currentVideoEl.muted = true;
+        if (muteBtn) {
+            const iconEl = muteBtn.querySelector('.video-action__icon');
+            if (iconEl) {
+                iconEl.innerHTML = iconSvg("muted");
+            }
+        }
+        state.currentVideoEl.play().then(() => {
+            if (pauseIcon) pauseIcon.classList.remove('video-pause-icon--visible');
+            toast("浏览器阻止了自动播放声音，已静音播放");
+        }).catch(() => {
+            // 显示暂停图标，提示用户手动播放
+            if (pauseIcon) pauseIcon.classList.add('video-pause-icon--visible');
+            toast("点击视频开始播放");
+        });
     });
 }
 
@@ -686,9 +735,13 @@ async function likeVideo(videoData) {
         
         // 更新本地数据
         videoData.likes = result.like_count;
+        videoData.isLiked = result.is_liked; // 保存点赞状态
         
-        // 更新所有显示该视频点赞数的地方
-        updateVideoLikeCount(videoData.id, result.like_count);
+        // 保存点赞状态到 localStorage
+        saveLikedVideoToStorage(videoId, result.is_liked);
+        
+        // 更新所有显示该视频点赞数和状态的地方
+        updateVideoLikeCount(videoData.id, result.like_count, result.is_liked);
         
         // 显示提示
         toast(result.message);
@@ -702,12 +755,22 @@ async function likeVideo(videoData) {
 }
 
 // 更新视频点赞数显示
-function updateVideoLikeCount(videoId, likeCount) {
-    // 更新播放页面的点赞数
+function updateVideoLikeCount(videoId, likeCount, isLiked) {
+    // 更新播放页面的点赞数和按钮状态
     const feedItem = $(`.feed-item[data-video-id="${videoId}"]`);
     if (feedItem) {
         const countEl = $('[data-count="likes"]', feedItem);
         if (countEl) countEl.textContent = formatCount(likeCount);
+        
+        // 更新点赞按钮状态
+        const likeBtn = $('[data-action="like"]', feedItem);
+        if (likeBtn) {
+            if (isLiked) {
+                likeBtn.classList.add('video-action--liked');
+            } else {
+                likeBtn.classList.remove('video-action--liked');
+            }
+        }
     }
     
     // 更新预览页面的点赞数
@@ -913,40 +976,224 @@ $all("[data-sheet-close]").forEach(btn => btn.addEventListener("click", closeShe
 
 function openCommentSheet(videoData){
     state.currentVideoData = videoData;
-    renderComments(videoData);
+    // 从后端获取评论列表
+    fetchComments(videoData);
     openSheet("comment");
 }
+
+// 从后端获取评论列表
+async function fetchComments(videoData) {
+    // 获取视频ID
+    let videoId;
+    if (videoData.serverId) {
+        videoId = videoData.serverId;
+    } else if (videoData.id && videoData.id.startsWith('server_')) {
+        videoId = parseInt(videoData.id.replace('server_', ''));
+    } else {
+        toast("无法获取视频ID");
+        return;
+    }
+    
+    try {
+        const res = await fetch(`http://localhost:5000/api/video/${videoId}/comments`);
+        
+        if (!res.ok) {
+            throw new Error("获取评论失败");
+        }
+        
+        const data = await res.json();
+        
+        // 转换后端评论格式为前端格式
+        videoData.commentItems = (data.comments || []).map(c => ({
+            id: c.id,
+            name: c.username,
+            text: c.content,
+            time: c.created_at,
+            user_id: c.user_id,
+            avatar_url: c.avatar_url
+        }));
+        
+        // 渲染评论列表
+        renderComments(videoData);
+        
+    } catch (err) {
+        console.error("获取评论失败:", err);
+        toast("获取评论失败");
+        // 显示空评论列表
+        videoData.commentItems = [];
+        renderComments(videoData);
+    }
+}
+
 function renderComments(videoData){
     el.commentList.innerHTML = "";
     const items = (videoData.commentItems || []).slice();
 
+    if (items.length === 0) {
+        el.commentList.innerHTML = `
+            <div class="comment-empty">
+                <p>暂无评论</p>
+                <p>快来发表第一条评论吧！</p>
+            </div>
+        `;
+        return;
+    }
+
     items.forEach(c => {
         const node = document.createElement("div");
         node.className = "comment";
+        node.dataset.commentId = c.id;
+        
+        // 头像显示：如果有头像URL则显示图片，否则显示首字母
+        let avatarContent;
+        if (c.avatar_url && c.avatar_url.trim() !== '') {
+            avatarContent = `<img src="${escapeHtml(c.avatar_url)}" alt="头像" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">`;
+        } else {
+            avatarContent = escapeHtml((c.name || "U").slice(0,1).toUpperCase());
+        }
+        
+        // 判断是否是当前用户的评论
+        const isOwnComment = state.currentUser && c.user_id === state.currentUser.id;
+        const deleteButton = isOwnComment ? `<span class="comment__delete" data-comment-id="${c.id}">删除</span>` : '';
+        
         node.innerHTML = `
-      <div class="comment__avatar">${escapeHtml((c.name || "U").slice(0,1).toUpperCase())}</div>
-      <div>
+      <div class="comment__avatar">${avatarContent}</div>
+      <div class="comment__content">
         <div class="comment__name">${escapeHtml(c.name)}</div>
         <div class="comment__text">${escapeHtml(c.text)}</div>
         <div class="comment__meta">
           <span>${escapeHtml(c.time)}</span>
-          <span>赞（占位）</span>
-          <span>回复（占位）</span>
+          ${deleteButton}
         </div>
       </div>
     `;
         el.commentList.appendChild(node);
     });
+    
+    // 绑定删除按钮事件
+    $all('.comment__delete', el.commentList).forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const commentId = parseInt(e.target.dataset.commentId);
+            await deleteComment(commentId, videoData);
+        });
+    });
 }
-el.commentSend.addEventListener("click", () => {
+
+// 发送评论
+el.commentSend.addEventListener("click", async () => {
     const text = el.commentInput.value.trim();
     if (!text || !state.currentVideoData) return;
-    state.currentVideoData.commentItems = state.currentVideoData.commentItems || [];
-    state.currentVideoData.commentItems.unshift({ name: "You", text, time: "刚刚" });
-    el.commentInput.value = "";
-    renderComments(state.currentVideoData);
-    toast("评论已发送");
+    
+    const token = localStorage.getItem("cwatchToken");
+    if (!token) {
+        toast("请先登录");
+        closeSheets();
+        showAuthPage();
+        return;
+    }
+    
+    // 获取视频ID
+    let videoId;
+    if (state.currentVideoData.serverId) {
+        videoId = state.currentVideoData.serverId;
+    } else if (state.currentVideoData.id && state.currentVideoData.id.startsWith('server_')) {
+        videoId = parseInt(state.currentVideoData.id.replace('server_', ''));
+    } else {
+        toast("无法获取视频ID");
+        return;
+    }
+    
+    try {
+        const res = await fetch(`http://localhost:5000/api/video/comment/${videoId}`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                content: text
+            })
+        });
+        
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || "评论失败");
+        }
+        
+        const result = await res.json();
+        
+        // 清空输入框
+        el.commentInput.value = "";
+        
+        // 重新获取评论列表
+        await fetchComments(state.currentVideoData);
+        
+        // 更新评论数
+        state.currentVideoData.comments = result.comment_count;
+        updateVideoCommentCount(state.currentVideoData.id, result.comment_count);
+        
+        toast("评论成功");
+        
+    } catch (err) {
+        console.error("评论失败:", err);
+        toast(err.message || "评论失败");
+    }
 });
+
+// 删除评论
+async function deleteComment(commentId, videoData) {
+    const token = localStorage.getItem("cwatchToken");
+    if (!token) {
+        toast("请先登录");
+        closeSheets();
+        showAuthPage();
+        return;
+    }
+    
+    if (!confirm("确定要删除这条评论吗？")) {
+        return;
+    }
+    
+    try {
+        const res = await fetch(`http://localhost:5000/api/video/comment/${commentId}`, {
+            method: "DELETE",
+            headers: {
+                "Authorization": `Bearer ${token}`
+            }
+        });
+        
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || "删除失败");
+        }
+        
+        toast("删除成功");
+        
+        // 重新获取评论列表
+        await fetchComments(videoData);
+        
+        // 更新评论数（减1）
+        videoData.comments = Math.max(0, (videoData.comments || 0) - 1);
+        updateVideoCommentCount(videoData.id, videoData.comments);
+        
+    } catch (err) {
+        console.error("删除评论失败:", err);
+        toast(err.message || "删除失败");
+    }
+}
+
+// 更新视频评论数显示
+function updateVideoCommentCount(videoId, commentCount) {
+    // 更新播放页面的评论数
+    const feedItem = $(`.feed-item[data-video-id="${videoId}"]`);
+    if (feedItem) {
+        const countEl = $('[data-count="comments"]', feedItem);
+        if (countEl) countEl.textContent = formatCount(commentCount);
+    }
+    
+    // 更新预览页面的评论数（如果需要显示的话）
+    // 目前预览页面只显示点赞数，不显示评论数
+}
 
 function openShareSheet(videoData){
     state.currentVideoData = videoData;
@@ -1032,8 +1279,12 @@ function bindGlobalEvents(){
         if (e.code === "Escape") closeSheets();
 
         if (e.code === "Space") {
+            // 如果评论弹窗或分享弹窗打开，不响应空格键
+            if (!el.sheetMask.hidden) return;
+            
             // 只在 player 页面响应
             if (!el.playerPage.classList.contains("page--active")) return;
+            
             e.preventDefault();
             togglePlay(state.currentVideoEl);
             if (el.hint) el.hint.style.opacity = "0.15";

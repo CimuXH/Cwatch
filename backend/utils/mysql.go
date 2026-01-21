@@ -3,7 +3,7 @@ package utils
 import (
 	"backend/models"
 	"log"
-
+	"errors"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
@@ -33,7 +33,7 @@ func AutoMigrate(m ...interface{}) error {
 	return db.AutoMigrate(m...)
 }
 
-// ==================== 用户相关数据库操作 ====================
+// ============================================ 用户相关数据库操作 =====================================================
 
 // GetUserByUsername 根据用户名查询用户
 func GetUserByUsername(username string) (*models.User, error) {
@@ -57,8 +57,7 @@ func UserExists(username string) bool {
 	return err == nil
 }
 
-// ==================== 视频相关数据库操作 ====================================
-
+// ============================================= 视频相关数据库操作 ============================================
 // CreateVideo 创建视频记录
 func CreateVideo(video *models.Video) error {
 	return db.Create(video).Error
@@ -121,16 +120,13 @@ func GetVideoList(page, pageSize int) ([]VideoListItem, int64, error) {
 
 	// 分页查询，按创建时间倒序
 	offset := (page - 1) * pageSize
-	if err := query.Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&videos).Error; err != nil {
+	if err := query.Preload("User").Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&videos).Error; err != nil {
 		return nil, 0, err
 	}
 
 	// 组装返回数据
 	result := make([]VideoListItem, 0, len(videos))
 	for _, v := range videos {
-		// 获取作者信息
-		var user models.User
-		db.First(&user, v.UserID)
 
 		// 获取点赞数
 		var likeCount int64
@@ -147,8 +143,8 @@ func GetVideoList(page, pageSize int) ([]VideoListItem, int64, error) {
 			URL:         v.URL, // 现在使用永久URL，无需重新生成
 			CoverURL:    v.CoverURL,
 			UserID:      v.UserID,
-			Username:    user.Username,
-			AvatarURL:   user.AvatarURL,
+			Username:    v.User.Username,
+			AvatarURL:   v.User.AvatarURL,
 			CreatedAt:   v.CreatedAt.Format("2006-01-02 15:04"),
 			Likes:       likeCount,
 			Comments:    commentCount,
@@ -158,7 +154,7 @@ func GetVideoList(page, pageSize int) ([]VideoListItem, int64, error) {
 	return result, total, nil
 }
 
-// ====================================== 点赞相关数据库操作 ================================
+// ====================================== 点赞相关数据库操作 ===============================================
 
 // CreateLike 创建点赞记录
 func CreateLike(like *models.Like) error {
@@ -228,3 +224,106 @@ func GetVideoLikeCount(videoID uint) int64 {
 	return count
 }
 
+// ===================================     ======= 评论相关数据库操作 ==================================================
+// CreateComment 添加评论信息
+func CreateComment(comment *models.Comment) error {
+	return db.Create(comment).Error
+}
+
+
+// 检查是否重新评论内容
+func CheckCommentIsRepetition(comment *models.Comment) (bool, error) {
+	// 获取评论内容，用户id，视频id
+	content := comment.Content
+	userid := comment.UserID
+	videoid := comment.VideoID
+
+	// 检查该用户的该视频评论是否重复
+	// 可以使用Count进行优化
+	var c models.Comment
+	err := db.Where("user_id = ? and video_id = ? and content = ?", userid, videoid, content).First(&c).Error
+
+	
+	// return err == nil
+	// 逻辑上优化一下，（存在评论存在但是数据库的连接出现错误的情况）
+	if err != nil {
+		// 如果错误是未找记录，返回
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	
+	return true, nil
+}
+
+// 获取某个视频的评论数
+func GetVideoCommentCount(videoid uint) int64 {
+	var count int64
+	err := db.Model(&models.Comment{}).Where("video_id = ?", videoid).Count(&count).Error
+
+	if err != nil {
+		log.Printf("统计评论数失败：%v", err)
+		return 0
+	}
+	
+	return count
+}
+
+// 某个视频的评论列表
+type CommentListItem struct {
+	ID          uint   `json:"id"`
+	Content		string `json:"content"`
+	UserID      uint   `json:"user_id"`
+	Username    string `json:"username"`
+	AvatarURL   string `json:"avatar_url"`
+	VideoID		uint   `json:"video_id"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// 获取某个视频的所有评论信息
+func GetVideoComments(videoid uint) ([]CommentListItem , error){
+	var comments []models.Comment
+
+	// 查找所有该视频的评论信息
+	if err := db.Preload("User").Where("video_id = ?", videoid).Find(&comments).Error; err != nil {
+		log.Printf("查找评论信息错误：%v", err)
+		return nil, err
+	}
+
+	result := make([]CommentListItem, 0, len(comments))
+	for _, v := range comments{
+		result = append(result, CommentListItem{
+			ID: 		v.ID,
+			Content:	v.Content,
+			UserID:		v.UserID,
+			Username:	v.User.Username,
+			AvatarURL:	v.User.AvatarURL,
+			VideoID:	v.VideoID,
+			CreatedAt:	v.CreatedAt.Format("2006-01-02 15:04"),
+		})
+	}
+
+	return result, nil
+}
+
+// GetCommentByID 根据评论ID获取评论信息
+func GetCommentByID(commentid uint) (*models.Comment, error) {
+	var comment models.Comment
+	err := db.Where("id = ?", commentid).First(&comment).Error
+	if err != nil {
+		return nil, err
+	}
+	return &comment, nil
+}
+
+// 删除某个视频某用户的评论
+func DeleteComment(commentid uint) error {
+	result := db.Where("id = ?", commentid).Delete(&models.Comment{})
+	if result.Error != nil {
+		log.Printf("删除评论错误：%v", result.Error)
+		return result.Error
+	}
+	
+	return nil
+}
