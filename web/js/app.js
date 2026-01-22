@@ -46,6 +46,7 @@ const el = {
     copyBtn: document.getElementById("copyBtn"),
     // 新增：登录注册相关元素
     authPage: document.getElementById("authPage"),
+    authClose: document.getElementById("authClose"),
     loginForm: document.getElementById("loginForm"),
     registerForm: document.getElementById("registerForm"),
     loginUsername: document.getElementById("loginUsername"),
@@ -209,6 +210,34 @@ function heartSvg(){
   </svg>`;
 }
 
+// 生成取消点赞动画用的破碎爱心 SVG
+function brokenHeartSvg(){
+    return `
+  <svg viewBox="0 0 24 24" width="120" height="120" fill="none">
+    <!-- 主体破碎的爱心 -->
+    <path d="M20.84 4.61c-1.54-1.37-3.99-1.19-5.4.39L12 8.44 8.56 5c-1.41-1.58-3.86-1.76-5.4-.39-1.76 1.56-1.85 4.26-.2 5.93L12 21l9.04-10.46c1.65-1.67 1.56-4.37-.2-5.93Z"
+      fill="rgba(255,77,109,0.92)" opacity="0.8"/>
+    <!-- 裂痕 -->
+    <path d="M12 8 L10 12 L12 16 L14 12 Z" fill="rgba(0,0,0,0.3)" stroke="rgba(0,0,0,0.5)" stroke-width="0.5"/>
+    <line x1="12" y1="8" x2="12" y2="21" stroke="rgba(0,0,0,0.4)" stroke-width="1"/>
+    <line x1="8" y1="10" x2="16" y2="14" stroke="rgba(0,0,0,0.3)" stroke-width="0.8"/>
+  </svg>
+  <!-- 碎片 -->
+  <svg class="fragment" viewBox="0 0 24 24" width="30" height="30" style="left: 20px; top: 15px;">
+    <path d="M12 5 L8 9 L12 13 Z" fill="rgba(255,77,109,0.7)"/>
+  </svg>
+  <svg class="fragment" viewBox="0 0 24 24" width="30" height="30" style="left: 70px; top: 15px;">
+    <path d="M12 5 L16 9 L12 13 Z" fill="rgba(255,77,109,0.7)"/>
+  </svg>
+  <svg class="fragment" viewBox="0 0 24 24" width="25" height="25" style="left: 15px; top: 70px;">
+    <path d="M8 12 L12 16 L8 20 Z" fill="rgba(255,77,109,0.6)"/>
+  </svg>
+  <svg class="fragment" viewBox="0 0 24 24" width="25" height="25" style="left: 75px; top: 70px;">
+    <path d="M16 12 L12 16 L16 20 Z" fill="rgba(255,77,109,0.6)"/>
+  </svg>
+  `;
+}
+
 /* =========================
    5) Page Router (Preview <-> Player)
 ========================= */
@@ -259,16 +288,22 @@ async function fetchVideoList(page = 1, append = false) {
     state.isLoadingVideos = true;
     
     try {
-        const res = await fetch(`http://localhost:5000/api/videos?page=${page}&page_size=${state.videoPageSize}`);
+        // 构建请求URL，如果已登录则带上 token
+        const token = localStorage.getItem("cwatchToken");
+        const headers = {};
+        if (token) {
+            headers["Authorization"] = `Bearer ${token}`;
+        }
+        
+        const res = await fetch(`http://localhost:5000/api/videos?page=${page}&page_size=${state.videoPageSize}`, {
+            headers: headers
+        });
         
         if (!res.ok) {
             throw new Error("获取视频列表失败");
         }
         
         const data = await res.json();
-        
-        // 从 localStorage 获取点赞状态
-        const likedVideos = getLikedVideosFromStorage();
         
         // 转换服务器数据格式为前端格式
         const serverVideos = (data.videos || []).map(v => ({
@@ -283,7 +318,7 @@ async function fetchVideoList(page = 1, append = false) {
             thumbText: "▶",
             coverUrl: v.cover_url,
             commentItems: [],
-            isLiked: likedVideos.includes(v.id), // 从本地存储恢复点赞状态
+            isLiked: v.is_liked || false, // 使用服务器返回的点赞状态
         }));
         
         if (append) {
@@ -499,6 +534,7 @@ function createFeedItem(videoData, index){
       </div>
 
       <div class="video-like-burst" aria-hidden="true">${heartSvg()}</div>
+      <div class="video-unlike-burst" aria-hidden="true">${brokenHeartSvg()}</div>
       <div class="video-pause-icon"></div>
     </div>
   `;
@@ -737,9 +773,6 @@ async function likeVideo(videoData) {
         videoData.likes = result.like_count;
         videoData.isLiked = result.is_liked; // 保存点赞状态
         
-        // 保存点赞状态到 localStorage
-        saveLikedVideoToStorage(videoId, result.is_liked);
-        
         // 更新所有显示该视频点赞数和状态的地方
         updateVideoLikeCount(videoData.id, result.like_count, result.is_liked);
         
@@ -795,12 +828,23 @@ function likeWithAnimation(feedItemEl, videoData){
     // 调用后端API进行点赞
     likeVideo(videoData).then(result => {
         if (result) {
-            // 只有成功时才播放动画
-            const burst = $(".video-like-burst", feedItemEl);
-            if (burst){
-                burst.classList.remove("is-show");
-                void burst.offsetWidth;
-                burst.classList.add("is-show");
+            // 根据点赞状态播放不同的动画
+            if (result.is_liked) {
+                // 点赞：显示完整爱心弹出动画
+                const likeBurst = $(".video-like-burst", feedItemEl);
+                if (likeBurst){
+                    likeBurst.classList.remove("is-show");
+                    void likeBurst.offsetWidth; // 强制重绘
+                    likeBurst.classList.add("is-show");
+                }
+            } else {
+                // 取消点赞：显示破碎爱心动画
+                const unlikeBurst = $(".video-unlike-burst", feedItemEl);
+                if (unlikeBurst){
+                    unlikeBurst.classList.remove("is-show");
+                    void unlikeBurst.offsetWidth; // 强制重绘
+                    unlikeBurst.classList.add("is-show");
+                }
             }
         }
     });
@@ -1317,14 +1361,7 @@ async function init(){
     
     console.log("登录状态检查完成:", state.isLoggedIn ? "已登录" : "未登录");
     
-    // 如果未登录，显示登录页面
-    if (!state.isLoggedIn) {
-        console.log("显示登录页面");
-        showAuthPage();
-        return;
-    }
-    
-    // 已登录，正常初始化应用
+    // 无论是否登录，都初始化应用（允许未登录用户浏览视频）
     console.log("初始化应用，显示首页");
     initApp();
 }
@@ -1387,16 +1424,23 @@ async function checkLoginStatus(){
     }
 }
 
-// 显示登录注册页面
+// 显示登录注册页面（弹窗形式）
 function showAuthPage(){
+    el.authPage.hidden = false;
     el.authPage.classList.add("auth-page--active");
     el.loginForm.hidden = false;
     el.registerForm.hidden = true;
+    // 暂停所有视频
+    pauseAllVideos();
 }
 
 // 隐藏登录注册页面
 function hideAuthPage(){
     el.authPage.classList.remove("auth-page--active");
+    // 延迟隐藏，等待动画完成
+    setTimeout(() => {
+        el.authPage.hidden = true;
+    }, 300);
 }
 
 // 初始化应用（登录后）
@@ -1503,6 +1547,18 @@ function updateAvatarUI(){
         el.avatar.title = "用户头像（占位）";
     }
 }
+
+// 关闭登录注册弹窗
+el.authClose.addEventListener("click", () => {
+    hideAuthPage();
+});
+
+// 点击遮罩层关闭弹窗
+el.authPage.addEventListener("click", (e) => {
+    if (e.target === el.authPage) {
+        hideAuthPage();
+    }
+});
 
 // 切换到注册表单
 el.showRegister.addEventListener("click", (e) => {
@@ -1671,6 +1727,15 @@ el.avatar.addEventListener("click", (e) => {
         showAuthPage();
         return;
     }
+    
+    // 更新下拉菜单中的用户名显示
+    if (state.currentUser && state.currentUser.username) {
+        const userInfoText = el.dropdownUserInfo.querySelector('.avatar-dropdown__text');
+        if (userInfoText) {
+            userInfoText.textContent = state.currentUser.username;
+        }
+    }
+    
     // 切换下拉菜单显示状态
     el.avatarDropdown.hidden = !el.avatarDropdown.hidden;
 });
@@ -1694,6 +1759,9 @@ el.dropdownLogout.addEventListener("click", async () => {
     
     const token = localStorage.getItem("cwatchToken");
     
+    // 保存当前用户名，用于清除点赞状态
+    const currentUsername = state.currentUser?.username;
+    
     try {
         // 调用后端登出接口
         const res = await fetch("http://localhost:5000/api/logout", {
@@ -1712,11 +1780,31 @@ el.dropdownLogout.addEventListener("click", async () => {
         // 即使后端请求失败，也继续清理前端状态
     }
     
+    // 清除当前用户的点赞状态（重要：防止下一个用户看到上一个用户的点赞状态）
+    if (currentUsername) {
+        const likedVideosKey = `likedVideos_${currentUsername}`;
+        localStorage.removeItem(likedVideosKey);
+    }
+    
     // 清理前端状态
     state.isLoggedIn = false;
     state.currentUser = null;
     localStorage.removeItem("cwatchToken");
     localStorage.removeItem("cwatchUser");
+    
+    // 重置视频列表和状态
+    state.videoList = [];
+    state.videoPage = 1;
+    state.hasMoreVideos = true;
+    state.previewRendered = false;
+    DATA.videos = [];
+    
+    // 清空预览网格
+    el.previewGrid.innerHTML = "";
+    
+    // 清空播放器页面
+    el.feed.innerHTML = "";
+    el.feed.dataset.rendered = "";
     
     toast("已退出登录");
     updateAvatarUI();
@@ -1740,10 +1828,10 @@ function requireLogin(callback) {
     };
 }
 
-// 包装需要登录才能执行的函数
-const originalOpenPlayerAt = openPlayerAt;
-openPlayerAt = requireLogin(originalOpenPlayerAt);
+// 不再拦截 openPlayerAt，允许未登录用户观看视频
+// 只拦截需要登录的操作：点赞、评论、分享
 
+// 包装需要登录才能执行的函数
 const originalOpenCommentSheet = openCommentSheet;
 openCommentSheet = requireLogin(originalOpenCommentSheet);
 

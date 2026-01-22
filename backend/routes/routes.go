@@ -15,8 +15,13 @@ func SetupRoutes(router *gin.Engine) {
 	{
 		api.POST("/register", controllers.Register)      // 注册
 		api.POST("/login", controllers.Login)            // 登录
-		api.GET("/videos", controllers.GetVideoList)     // 获取视频列表（公开）
 		api.GET("/video/:videoid/comments", controllers.GetComments) // 获取视频评论（公开）
+	}
+
+	// 可选认证路由（登录后有额外功能）
+	{
+		// 获取视频列表：未登录可访问，登录后返回 is_liked 字段
+		api.GET("/videos", middlewares.OptionalAuthMiddleware(), controllers.GetVideoList)
 	}
 
 	// 需要认证的路由

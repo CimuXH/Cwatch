@@ -4,6 +4,7 @@ import (
 	"backend/models"
 	"backend/utils"
 	"errors"
+	"log"
 	"path/filepath"
 	"strings"
 
@@ -164,7 +165,14 @@ func (s *VideoService) ConfirmUpload(username string, req ConfirmUploadRequest) 
 		return nil, errors.New("更新视频状态失败")
 	}
 
-	// TODO: 发送消息到 RabbitMQ 触发转码任务
+	// 7. 发送消息到 RabbitMQ 触发视频处理任务（生成封面）
+	err = utils.PublishVideoTask(video.ID, video.FileName)
+	if err != nil {
+		// 发送消息失败不影响视频上传成功，只记录日志
+		// 可以后续手动触发或通过定时任务重试
+		log.Printf("发送视频处理任务失败，video_service.go - ConfirmUpload函数")
+		return nil, errors.New("发送视频处理任务失败")
+	}
 
 	return &ConfirmUploadResponse{
 		Success:  true,
@@ -173,9 +181,9 @@ func (s *VideoService) ConfirmUpload(username string, req ConfirmUploadRequest) 
 }
 
 // GetVideoList 获取视频列表
-// 参数：页码、每页数量
+// 参数：页码、每页数量、用户名（可选）
 // 返回：视频列表响应
-func (s *VideoService) GetVideoList(page, pageSize int) (*VideoListResponse, error) {
+func (s *VideoService) GetVideoList(page, pageSize int, username string) (*VideoListResponse, error) {
 	// 限制每页数量
 	if page < 1 {
 		page = 1
@@ -188,6 +196,28 @@ func (s *VideoService) GetVideoList(page, pageSize int) (*VideoListResponse, err
 	videos, total, err := utils.GetVideoList(page, pageSize)
 	if err != nil {
 		return nil, errors.New("获取视频列表失败")
+	}
+
+	// 如果用户已登录，查询点赞状态
+	if username != "" {
+		// 获取用户信息
+		user, err := utils.GetUserByUsername(username)
+		if err == nil {
+			// 获取当前用户点赞的所有视频ID
+			likedVideoIDs, err := utils.GetUserLikedVideoIDs(user.ID)
+			if err == nil {
+				// 为每个视频设置 is_liked 字段
+				likedMap := make(map[uint]bool)
+				for _, videoID := range likedVideoIDs {
+					likedMap[videoID] = true
+				}
+
+				// 更新视频列表的 is_liked 字段
+				for i := range videos {
+					videos[i].IsLiked = likedMap[videos[i].ID]
+				}
+			}
+		}
 	}
 
 	return &VideoListResponse{

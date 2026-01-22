@@ -134,3 +134,4 @@ func CheckFileExists(filename string) (bool, error) {
 
 	return true, nil // 文件存在
 }
+

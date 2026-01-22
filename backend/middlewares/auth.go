@@ -62,3 +62,51 @@ func AuthMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// OptionalAuthMiddleware 可选的JWT认证中间件
+// 如果提供了有效的token，则设置用户信息；否则继续处理请求
+// 用于那些登录和未登录都可以访问，但登录后有额外功能的API
+func OptionalAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 从请求头获取Authorization字段
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			// 没有token，继续处理请求（作为未登录用户）
+			c.Next()
+			return
+		}
+
+		// 检查Bearer前缀
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			// token格式错误，继续处理请求（作为未登录用户）
+			c.Next()
+			return
+		}
+
+		// 提取令牌
+		token := parts[1]
+
+		// 检查 token 是否在黑名单中
+		if utils.IsBlacklisted(token) {
+			// token已失效，继续处理请求（作为未登录用户）
+			c.Next()
+			return
+		}
+
+		// 验证JWT令牌
+		claims, err := utils.ValidateJWT(token)
+		if err != nil {
+			// token无效，继续处理请求（作为未登录用户）
+			c.Next()
+			return
+		}
+
+		// token有效，将用户名存入上下文
+		c.Set("username", claims.Username)
+		c.Set("token", token)
+
+		// 继续处理请求
+		c.Next()
+	}
+}

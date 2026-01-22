@@ -101,6 +101,7 @@ type VideoListItem struct {
 	CreatedAt   string `json:"created_at"`
 	Likes       int64  `json:"likes"`
 	Comments    int64  `json:"comments"`
+	IsLiked     bool   `json:"is_liked"` // 当前用户是否点赞（需要登录）
 }
 
 // GetVideoList 获取视频列表（分页）
@@ -222,6 +223,26 @@ func GetVideoLikeCount(videoID uint) int64 {
 	}
 	
 	return count
+}
+
+// GetUserLikedVideoIDs 获取用户点赞的所有视频ID列表
+// 参数：用户ID
+// 返回：视频ID列表
+func GetUserLikedVideoIDs(userID uint) ([]uint, error) {
+	var likes []models.Like
+	err := db.Where("user_id = ?", userID).Find(&likes).Error
+	if err != nil {
+		log.Printf("查询用户点赞列表失败: %v", err)
+		return nil, err
+	}
+	
+	// 提取视频ID
+	videoIDs := make([]uint, 0, len(likes))
+	for _, like := range likes {
+		videoIDs = append(videoIDs, like.VideoID)
+	}
+	
+	return videoIDs, nil
 }
 
 // ===================================     ======= 评论相关数据库操作 ==================================================

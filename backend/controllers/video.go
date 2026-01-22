@@ -12,14 +12,22 @@ var videoService = services.VideoService{}
 
 // GetVideoList 获取视频列表
 // 请求：GET /api/videos?page=1&page_size=10
+// Header: Authorization: Bearer <token> (可选，如果提供则返回 is_liked 字段)
 // 返回：{ "videos": [...], "total": 100, "page": 1, "page_size": 10 }
 func GetVideoList(c *gin.Context) {
 	// 获取分页参数
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "12"))
 
+	// 尝试获取当前用户（可选，未登录时为空字符串）
+	username, _ := c.Get("username")
+	usernameStr := ""
+	if username != nil {
+		usernameStr = username.(string)
+	}
+
 	// 调用服务层获取视频列表
-	resp, err := videoService.GetVideoList(page, pageSize)
+	resp, err := videoService.GetVideoList(page, pageSize, usernameStr)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),

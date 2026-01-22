@@ -38,6 +38,13 @@ func main() {
 		log.Fatal("MinIO 连接失败：", err)
 	}
 
+	// 初始化 RabbitMQ 连接
+	if err := utils.InitRabbitMQ(); err != nil {
+		log.Fatal("RabbitMQ 连接失败：", err)
+	}
+	// 程序退出时关闭 RabbitMQ 连接
+	defer utils.CloseRabbitMQ()
+
 	// 创建Gin路由引擎
 	router := gin.Default()
 
