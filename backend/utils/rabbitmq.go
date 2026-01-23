@@ -15,7 +15,7 @@ var rabbitChannel *amqp.Channel
 
 // RabbitMQ 配置
 const (
-	RabbitMQURL   = "amqp://admin:rabbitmq030303@101.132.25.34:5672/" // RabbitMQ 连接地址
+	RabbitMQURL   = "amqp://admin:rabbitmq111111@101.132.25.34:5672/" // RabbitMQ 连接地址
 	QueueName     = "video_processing"                        // 队列名称
 )
 

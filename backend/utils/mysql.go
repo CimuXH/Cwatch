@@ -15,7 +15,7 @@ var db *gorm.DB
 func InitMySQL() error {
 	// 配置MySQL连接字符串
 	// 格式：用户名:密码@tcp(主机:端口)/数据库名?参数
-	dsn := "root:mysql030303@tcp(101.132.25.34:3306)/cwatch?charset=utf8mb4&parseTime=True&loc=Local"
+	dsn := "root:mysql111111@tcp(101.132.25.34:3306)/cwatch?charset=utf8mb4&parseTime=True&loc=Local"
 
 	// 连接数据库
 	conn, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
@@ -93,7 +93,9 @@ type VideoListItem struct {
 	ID          uint   `json:"id"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
-	URL         string `json:"url"`
+	URL         string `json:"url"`          // 原视频URL
+	URL720p     string `json:"url_720p"`     // 720p视频URL
+	URL1080p    string `json:"url_1080p"`    // 1080p视频URL
 	CoverURL    string `json:"cover_url"`
 	UserID      uint   `json:"user_id"`
 	Username    string `json:"username"`
@@ -141,7 +143,9 @@ func GetVideoList(page, pageSize int) ([]VideoListItem, int64, error) {
 			ID:          v.ID,
 			Title:       v.Title,
 			Description: v.Description,
-			URL:         v.URL, // 现在使用永久URL，无需重新生成
+			URL:         v.URL,      // 原视频URL
+			URL720p:     v.URL720p,  // 720p视频URL
+			URL1080p:    v.URL1080p, // 1080p视频URL
 			CoverURL:    v.CoverURL,
 			UserID:      v.UserID,
 			Username:    v.User.Username,

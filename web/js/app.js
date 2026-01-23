@@ -310,6 +310,8 @@ async function fetchVideoList(page = 1, append = false) {
             id: `server_${v.id}`,
             serverId: v.id,
             src: v.url,
+            url_720p: v.url_720p,      // 720p视频URL
+            url_1080p: v.url_1080p,    // 1080p视频URL
             title: v.title || "未命名视频",
             author: `@${v.username || "用户"}`,
             likes: v.likes || 0,
@@ -522,6 +524,34 @@ function createFeedItem(videoData, index){
           <span class="video-action__icon">${iconSvg("sound")}</span>
           <span class="video-action__count">声音</span>
         </button>
+
+        <button class="video-action" data-action="quality" aria-label="Quality">
+          <span class="video-action__icon">HD</span>
+          <span class="video-action__count" data-quality-label>自动</span>
+        </button>
+      </div>
+
+      <!-- 清晰度选择菜单 -->
+      <div class="video-quality-menu" data-quality-menu hidden>
+        <div class="video-quality-menu__header">选择清晰度</div>
+        <div class="video-quality-menu__list">
+          <div class="video-quality-menu__item video-quality-menu__item--active" data-quality="auto">
+            <span class="video-quality-menu__label">自动</span>
+            <span class="video-quality-menu__check">✓</span>
+          </div>
+          <div class="video-quality-menu__item" data-quality="1080p">
+            <span class="video-quality-menu__label">1080p 高清</span>
+            <span class="video-quality-menu__check">✓</span>
+          </div>
+          <div class="video-quality-menu__item" data-quality="720p">
+            <span class="video-quality-menu__label">720p 标清</span>
+            <span class="video-quality-menu__check">✓</span>
+          </div>
+          <div class="video-quality-menu__item" data-quality="original">
+            <span class="video-quality-menu__label">原画</span>
+            <span class="video-quality-menu__check">✓</span>
+          </div>
+        </div>
       </div>
 
       <div class="video-progress" aria-label="Progress">
@@ -572,6 +602,11 @@ function createFeedItem(videoData, index){
             return;
         }
 
+        if (action === "quality") {
+            toggleQualityMenu(item);
+            return;
+        }
+
         if (action === "like") {
             likeWithAnimation(item, videoData);
             return;
@@ -604,6 +639,42 @@ function createFeedItem(videoData, index){
     const likeBtn = item.querySelector('[data-action="like"]');
     if (likeBtn && videoData.isLiked) {
         likeBtn.classList.add('video-action--liked');
+    }
+    
+    // 绑定清晰度菜单项点击事件
+    const qualityMenu = $('[data-quality-menu]', item);
+    if (qualityMenu) {
+        $all('.video-quality-menu__item', qualityMenu).forEach(menuItem => {
+            menuItem.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const quality = menuItem.dataset.quality;
+                switchVideoQuality(item, quality, videoData);
+                qualityMenu.hidden = true;
+            });
+        });
+    }
+    
+    // 根据视频数据设置可用的清晰度选项
+    if (qualityMenu) {
+        // 如果没有1080p，禁用该选项
+        if (!videoData.url_1080p) {
+            const item1080p = $('[data-quality="1080p"]', qualityMenu);
+            if (item1080p) {
+                item1080p.classList.add('video-quality-menu__item--disabled');
+                item1080p.style.opacity = '0.4';
+                item1080p.style.cursor = 'not-allowed';
+            }
+        }
+        
+        // 如果没有720p，禁用该选项
+        if (!videoData.url_720p) {
+            const item720p = $('[data-quality="720p"]', qualityMenu);
+            if (item720p) {
+                item720p.classList.add('video-quality-menu__item--disabled');
+                item720p.style.opacity = '0.4';
+                item720p.style.cursor = 'not-allowed';
+            }
+        }
     }
 
     return item;
@@ -925,6 +996,115 @@ function setupProgress(feedItemEl, videoEl){
     }, { passive: true });
 
     bar.addEventListener("touchend", up);
+}
+
+/* =========================
+   10.5) Quality Selection
+========================= */
+
+// 切换清晰度菜单显示/隐藏
+function toggleQualityMenu(feedItemEl) {
+    const menu = $('[data-quality-menu]', feedItemEl);
+    if (!menu) return;
+    
+    // 切换显示状态
+    menu.hidden = !menu.hidden;
+    
+    // 如果显示菜单，点击其他地方关闭
+    if (!menu.hidden) {
+        const closeMenu = (e) => {
+            if (!menu.contains(e.target) && !e.target.closest('[data-action="quality"]')) {
+                menu.hidden = true;
+                document.removeEventListener('click', closeMenu);
+            }
+        };
+        // 延迟添加事件，避免立即触发
+        setTimeout(() => {
+            document.addEventListener('click', closeMenu);
+        }, 100);
+    }
+}
+
+// 切换视频清晰度
+function switchVideoQuality(feedItemEl, quality, videoData) {
+    const videoEl = $('.video-media', feedItemEl);
+    if (!videoEl) return;
+    
+    // 保存当前播放状态
+    const currentTime = videoEl.currentTime;
+    const wasPaused = videoEl.paused;
+    
+    // 确定新的视频源
+    let newSrc = '';
+    let qualityLabel = '';
+    
+    switch (quality) {
+        case '1080p':
+            newSrc = videoData.url_1080p || videoData.src;
+            qualityLabel = '1080p';
+            break;
+        case '720p':
+            newSrc = videoData.url_720p || videoData.src;
+            qualityLabel = '720p';
+            break;
+        case 'original':
+            newSrc = videoData.src;
+            qualityLabel = '原画';
+            break;
+        case 'auto':
+        default:
+            // 自动选择：优先1080p，其次720p，最后原画
+            if (videoData.url_1080p) {
+                newSrc = videoData.url_1080p;
+                qualityLabel = '自动';
+            } else if (videoData.url_720p) {
+                newSrc = videoData.url_720p;
+                qualityLabel = '自动';
+            } else {
+                newSrc = videoData.src;
+                qualityLabel = '自动';
+            }
+            break;
+    }
+    
+    // 如果没有对应清晰度的视频，提示用户
+    if (!newSrc || newSrc === videoEl.src) {
+        if (quality !== 'auto' && quality !== 'original') {
+            toast(`${qualityLabel} 清晰度暂未生成`);
+        }
+        return;
+    }
+    
+    // 切换视频源
+    videoEl.src = newSrc;
+    videoEl.currentTime = currentTime;
+    
+    // 恢复播放状态
+    if (!wasPaused) {
+        videoEl.play().catch(() => {
+            console.log('自动播放被阻止');
+        });
+    }
+    
+    // 更新清晰度标签
+    const qualityLabelEl = $('[data-quality-label]', feedItemEl);
+    if (qualityLabelEl) {
+        qualityLabelEl.textContent = qualityLabel;
+    }
+    
+    // 更新菜单中的选中状态
+    const menu = $('[data-quality-menu]', feedItemEl);
+    if (menu) {
+        $all('.video-quality-menu__item', menu).forEach(item => {
+            item.classList.remove('video-quality-menu__item--active');
+        });
+        const selectedItem = $(`[data-quality="${quality}"]`, menu);
+        if (selectedItem) {
+            selectedItem.classList.add('video-quality-menu__item--active');
+        }
+    }
+    
+    toast(`已切换到 ${qualityLabel}`);
 }
 
 /* =========================

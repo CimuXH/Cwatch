@@ -28,7 +28,9 @@ type Video struct {
 	gorm.Model
 	Title       string `gorm:"not null" json:"title"`              // 视频标题
 	Description string `json:"description"`                        // 视频描述
-	URL         string `json:"url"`                                // 视频文件URL
+	URL         string `json:"url"`                                // 视频文件URL（原视频）
+	URL720p     string `json:"url_720p"`                           // 720p视频URL
+	URL1080p    string `json:"url_1080p"`                          // 1080p视频URL
 	CoverURL    string `json:"cover_url"`                          // 视频封面图URL
 	UserID      uint   `json:"user_id"`                            // 视频所属用户ID
 	User        User   `gorm:"foreignKey:UserID" json:"-"`         // 与User模型建立关联

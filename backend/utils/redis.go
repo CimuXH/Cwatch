@@ -23,7 +23,7 @@ const TokenExpiration = 24 * time.Hour
 func InitRedis() error {
 	rdb = redis.NewClient(&redis.Options{
 		Addr:     "101.132.25.34:6379",
-		Password: "redis030303",
+		Password: "redis111111",
 		DB:       0,
 	})
 

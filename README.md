@@ -4,19 +4,25 @@
 本项目用于gin以及相关中间件的巩固学习。
 本项目是一个视频相关Web项目，涉及功能：注册登录，视频上传，点赞评论等功能
 
-go1.24.9 
+go-1.24.9 (win中)
 
-Mysql8.0
+FFmpeg-8.0.1（win中）
 
-Redis8.0
+Docker - （服务器中）
 
-RabbitMQ3.11-management
+​	- Mysql-8.0
 
-Nginx1.28
+​	- Redis-8.0
 
-MinIO
+​	- RabbitMQ-3.11-management
 
-Docker
+​	- Nginx-1.28
+
+​	- MinIO-RELEASE.2025-09-07T16-13-09Z
+
+
+
+
 
 
 
@@ -30,11 +36,14 @@ Docker
   /models      # 数据结构
   /service    # 业务层
   /middlewares # jwt
-  /utils      # mysql,redis,minio,token,bcrypt
+  /utils      # mysql,redis,minio,token,bcrypt,rabbitmq
   main.go
 /web          # 前端页面（简单 HTML/JS/CSS）
   /js
   /css
+  index.html
+/worker		# 消费者处理视频封面等操作
+  main.go
 
 
 README.md

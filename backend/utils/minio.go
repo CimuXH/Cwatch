@@ -25,7 +25,7 @@ const (
 func InitMinIO() error {
 	// MinIO 凭证
 	accessKeyID := "minioadmin"
-	secretAccessKey := "minio030303"
+	secretAccessKey := "minio111111"
 	useSSL := false
 
 	// 创建 MinIO 客户端实例
