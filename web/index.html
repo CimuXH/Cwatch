@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>Short Video App (Mock) - Dark Mode</title>
+    <title>Cwatch Video</title>
     <link rel="stylesheet" href="./css/styles.css" />
 </head>
 <body>
@@ -52,20 +52,16 @@
             <span class="sidebar__label">发现</span>
         </button>
 
-        <button class="sidebar__item" id="navUpload" title="上传（占位）">
+        <button class="sidebar__item" id="navUpload" title="上传">
             <span class="sidebar__icon">⤴</span>
             <span class="sidebar__label">上传</span>
         </button>
 
-        <button class="sidebar__item" id="navFav" title="收藏（占位）">
-            <span class="sidebar__icon">★</span>
-            <span class="sidebar__label">收藏</span>
+        <button class="sidebar__item" id="navFav" title="我的视频">
+            <span class="sidebar__icon">📹</span>
+            <span class="sidebar__label">我的视频</span>
         </button>
 
-        <button class="sidebar__item" id="navSetting" title="设置（占位）">
-            <span class="sidebar__icon">⚙</span>
-            <span class="sidebar__label">设置</span>
-        </button>
 
         <div class="sidebar__spacer"></div>
 
@@ -238,6 +234,52 @@
             <button class="upload-btn upload-btn--cancel" id="uploadCancel">取消</button>
             <button class="upload-btn upload-btn--submit" id="uploadSubmit" disabled>上传视频</button>
         </footer>
+    </div>
+</section>
+
+<!-- 自定义确认对话框 -->
+<section id="confirmDialog" class="confirm-dialog" hidden>
+    <div class="confirm-dialog__backdrop"></div>
+    <div class="confirm-dialog__content">
+        <div class="confirm-dialog__icon">⚠️</div>
+        <h3 class="confirm-dialog__title" id="confirmDialogTitle">确认操作</h3>
+        <p class="confirm-dialog__message" id="confirmDialogMessage">确定要执行此操作吗？</p>
+        <div class="confirm-dialog__buttons">
+            <button class="confirm-dialog__btn confirm-dialog__btn--cancel" id="confirmDialogCancel">取消</button>
+            <button class="confirm-dialog__btn confirm-dialog__btn--confirm" id="confirmDialogConfirm">确定</button>
+        </div>
+    </div>
+</section>
+
+<!-- 个人信息展示页面 -->
+<section id="userInfoModal" class="user-info-modal" hidden>
+    <div class="user-info-modal__backdrop"></div>
+    <div class="user-info-modal__content">
+        <header class="user-info-modal__header">
+            <h2 class="user-info-modal__title">个人信息</h2>
+            <button class="user-info-modal__close" id="userInfoModalClose">✕</button>
+        </header>
+        <div class="user-info-modal__body">
+            <div class="user-info-card">
+                <div class="user-info-card__avatar" id="userInfoAvatar">
+                    <span>U</span>
+                </div>
+                <div class="user-info-card__details">
+                    <div class="user-info-card__item">
+                        <span class="user-info-card__label">用户名</span>
+                        <span class="user-info-card__value" id="userInfoUsername">-</span>
+                    </div>
+                    <div class="user-info-card__item">
+                        <span class="user-info-card__label">用户ID</span>
+                        <span class="user-info-card__value" id="userInfoId">-</span>
+                    </div>
+                    <div class="user-info-card__item">
+                        <span class="user-info-card__label">注册时间</span>
+                        <span class="user-info-card__value" id="userInfoCreatedAt">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </section>
 

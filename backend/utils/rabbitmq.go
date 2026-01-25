@@ -3,7 +3,9 @@ package utils
 // RabbitMQ 生产者
 
 import (
+	"backend/config"
 	"encoding/json"
+	"fmt"
 	"log"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -15,8 +17,7 @@ var rabbitChannel *amqp.Channel
 
 // RabbitMQ 配置
 const (
-	RabbitMQURL   = "amqp://admin:rabbitmq111111@101.132.25.34:5672/" // RabbitMQ 连接地址
-	QueueName     = "video_processing"                        // 队列名称
+	QueueName = "video_processing" // 队列名称
 )
 
 // VideoTask 视频处理任务结构
@@ -27,8 +28,15 @@ type VideoTask struct {
 
 // InitRabbitMQ 初始化 RabbitMQ 连接
 func InitRabbitMQ() error {
+	// 构建 RabbitMQ 连接地址
+	rabbitMQURL := fmt.Sprintf("amqp://%s:%s@%s:%s/",
+		config.RabbitMQUsername,
+		config.RabbitMQPassword,
+		config.RabbitMQHost,
+		config.RabbitMQPort)
+
 	// 连接到 RabbitMQ 服务器
-	conn, err := amqp.Dial(RabbitMQURL)
+	conn, err := amqp.Dial(rabbitMQURL)
 	if err != nil {
 		return err
 	}

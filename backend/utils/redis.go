@@ -1,7 +1,9 @@
 package utils
 
 import (
+	"backend/config"
 	"context"
+	"fmt"
 	"github.com/redis/go-redis/v9"
 	"log"
 	"time"
@@ -22,8 +24,8 @@ const TokenExpiration = 24 * time.Hour
 // InitRedis 初始化 Redis 连接
 func InitRedis() error {
 	rdb = redis.NewClient(&redis.Options{
-		Addr:     "101.132.25.34:6379",
-		Password: "redis111111",
+		Addr:     fmt.Sprintf("%s:%s", config.RedisHost, config.RedisPort),
+		Password: config.RedisPassword,
 		DB:       0,
 	})
 

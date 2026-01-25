@@ -78,6 +78,11 @@ const el = {
     uploadProgressText: document.getElementById("uploadProgressText"),
     uploadCancel: document.getElementById("uploadCancel"),
     uploadSubmit: document.getElementById("uploadSubmit"),
+    // 新增：管理按钮相关元素
+    pageActions: document.getElementById("pageActions"),
+    manageBtn: document.getElementById("manageBtn"),
+    deleteBatchBtn: document.getElementById("deleteBatchBtn"),
+    cancelManageBtn: document.getElementById("cancelManageBtn"),
 };
 
 const state = {
@@ -101,6 +106,11 @@ const state = {
     videoTotal: 0, // 总数
     isLoadingVideos: false, // 是否正在加载
     hasMoreVideos: true, // 是否还有更多
+    // 新增：全局静音状态
+    globalMuted: false, // 全局静音状态
+    // 新增：管理模式状态
+    isManageMode: false, // 是否处于管理模式
+    selectedVideoIds: [], // 选中的视频ID列表
 };
 
 /* =========================
@@ -159,6 +169,57 @@ function toast(msg){
     t.style.opacity = "1";
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => (t.style.opacity = "0"), 1100);
+}
+
+// 显示自定义确认对话框
+function showConfirmDialog(title, message) {
+    return new Promise((resolve) => {
+        const dialog = document.getElementById('confirmDialog');
+        const titleEl = document.getElementById('confirmDialogTitle');
+        const messageEl = document.getElementById('confirmDialogMessage');
+        const confirmBtn = document.getElementById('confirmDialogConfirm');
+        const cancelBtn = document.getElementById('confirmDialogCancel');
+        
+        // 设置内容
+        titleEl.textContent = title;
+        messageEl.textContent = message;
+        
+        // 显示对话框
+        dialog.hidden = false;
+        
+        // 确认按钮事件
+        const handleConfirm = () => {
+            dialog.hidden = true;
+            cleanup();
+            resolve(true);
+        };
+        
+        // 取消按钮事件
+        const handleCancel = () => {
+            dialog.hidden = true;
+            cleanup();
+            resolve(false);
+        };
+        
+        // 点击背景关闭
+        const handleBackdropClick = (e) => {
+            if (e.target.classList.contains('confirm-dialog__backdrop')) {
+                handleCancel();
+            }
+        };
+        
+        // 清理事件监听器
+        const cleanup = () => {
+            confirmBtn.removeEventListener('click', handleConfirm);
+            cancelBtn.removeEventListener('click', handleCancel);
+            dialog.removeEventListener('click', handleBackdropClick);
+        };
+        
+        // 绑定事件
+        confirmBtn.addEventListener('click', handleConfirm);
+        cancelBtn.addEventListener('click', handleCancel);
+        dialog.addEventListener('click', handleBackdropClick);
+    });
 }
 
 /* =========================
@@ -248,7 +309,11 @@ function showPage(page){
     el.playerPage.classList.toggle("page--active", !isPreview);
 
     // 进入预览页：确保暂停所有视频
-    if (isPreview) pauseAllVideos();
+    if (isPreview) {
+        pauseAllVideos();
+        // 清除 URL 参数
+        history.pushState({}, '', window.location.pathname);
+    }
 }
 
 // 打开播放器页面并跳转到指定索引的视频
@@ -268,6 +333,13 @@ function openPlayerAt(index){
 
     // 设置当前状态并自动播放
     setCurrentByIndex(index);
+    
+    // 更新 URL，添加视频 ID 参数
+    const videoData = DATA.videos[index];
+    if (videoData && videoData.serverId) {
+        const newUrl = `${window.location.pathname}?video_id=${videoData.serverId}`;
+        history.pushState({ videoId: videoData.serverId, index: index }, '', newUrl);
+    }
     
     // 延迟一下确保视频元素已经设置好，然后自动播放
     setTimeout(() => {
@@ -319,6 +391,7 @@ async function fetchVideoList(page = 1, append = false) {
             shares: 0,
             thumbText: "▶",
             coverUrl: v.cover_url,
+            createdAt: v.created_at || "",  // 创建时间
             commentItems: [],
             isLiked: v.is_liked || false, // 使用服务器返回的点赞状态
         }));
@@ -445,24 +518,47 @@ function createPreviewCard(videoData, index) {
     const card = document.createElement("article");
     card.className = "preview-card";
     card.dataset.index = String(index);
+    card.dataset.videoId = videoData.serverId || videoData.id;
 
     // 如果有封面图则显示封面图
     const thumbContent = videoData.coverUrl 
         ? `<img src="${escapeHtml(videoData.coverUrl)}" alt="封面" class="preview-card__cover">`
         : `<div class="preview-card__play">${videoData.thumbText || "▶"}</div>`;
 
+    // 格式化创建时间（只显示年月日）
+    let formattedDate = '';
+    if (videoData.createdAt) {
+        // 创建时间格式：2006-01-02 15:04
+        // 只取前10个字符（年月日）
+        formattedDate = videoData.createdAt.substring(0, 10);
+    }
+
     card.innerHTML = `
+      <div class="preview-card__checkbox"></div>
       <div class="preview-card__thumb">
         ${thumbContent}
         <div class="preview-card__play-overlay">▶</div>
       </div>
       <div class="preview-card__meta">
         <div class="preview-card__title">${escapeHtml(videoData.title)}</div>
-        <div class="preview-card__author">${escapeHtml(videoData.author)} · ${formatCount(videoData.likes)} 赞</div>
+        <div class="preview-card__info">
+          <div class="preview-card__author">${escapeHtml(videoData.author)} · ${formatCount(videoData.likes)} 赞</div>
+          ${formattedDate ? `<div class="preview-card__date">${escapeHtml(formattedDate)}</div>` : ''}
+        </div>
       </div>
     `;
 
-    card.addEventListener("click", () => openPlayerAt(index));
+    // 点击事件处理
+    card.addEventListener("click", (e) => {
+        // 如果处于管理模式
+        if (state.isManageMode) {
+            e.stopPropagation();
+            toggleVideoSelection(card, videoData.serverId || videoData.id);
+        } else {
+            openPlayerAt(index);
+        }
+    });
+    
     return card;
 }
 
@@ -517,7 +613,7 @@ function createFeedItem(videoData, index){
 
         <button class="video-action" data-action="share" aria-label="Share">
           <span class="video-action__icon">${iconSvg("share")}</span>
-          <span class="video-action__count" data-count="shares">${formatCount(videoData.shares)}</span>
+          <span class="video-action__count">分享</span>
         </button>
 
         <button class="video-action" data-action="mute" aria-label="Mute/Unmute">
@@ -590,15 +686,23 @@ function createFeedItem(videoData, index){
         const action = btn.dataset.action;
 
         if (action === "mute") {
-            videoEl.muted = !videoEl.muted;
+            // 切换全局静音状态
+            state.globalMuted = !state.globalMuted;
             
-            // 更新声音按钮图标
-            const iconEl = btn.querySelector('.video-action__icon');
-            if (iconEl) {
-                iconEl.innerHTML = iconSvg(videoEl.muted ? "muted" : "sound");
-            }
+            // 更新所有视频的静音状态
+            $all("video.video-media", el.feed).forEach(v => {
+                v.muted = state.globalMuted;
+            });
             
-            toast(videoEl.muted ? "已静音" : "已开启声音");
+            // 更新所有静音按钮的图标
+            $all('[data-action="mute"]', el.feed).forEach(muteBtn => {
+                const iconEl = muteBtn.querySelector('.video-action__icon');
+                if (iconEl) {
+                    iconEl.innerHTML = iconSvg(state.globalMuted ? "muted" : "sound");
+                }
+            });
+            
+            toast(state.globalMuted ? "已静音" : "已开启声音");
             return;
         }
 
@@ -626,12 +730,13 @@ function createFeedItem(videoData, index){
     setupProgress(item, videoEl);
     setupGestures(item, cardEl, videoData);
     
-    // 初始化声音按钮图标状态
+    // 初始化声音按钮图标状态和视频静音状态
+    videoEl.muted = state.globalMuted; // 使用全局静音状态
     const muteBtn = item.querySelector('[data-action="mute"]');
     if (muteBtn) {
         const iconEl = muteBtn.querySelector('.video-action__icon');
         if (iconEl) {
-            iconEl.innerHTML = iconSvg(videoEl.muted ? "muted" : "sound");
+            iconEl.innerHTML = iconSvg(state.globalMuted ? "muted" : "sound");
         }
     }
     
@@ -720,6 +825,12 @@ function setCurrentByIndex(index){
     state.currentFeedItemEl = itemEl;
     state.currentVideoEl = $(".video-media", itemEl);
     state.currentVideoData = DATA.videos[index] || null;
+    
+    // 更新 URL（使用 replaceState 避免产生过多历史记录）
+    if (state.currentVideoData && state.currentVideoData.serverId) {
+        const newUrl = `${window.location.pathname}?video_id=${state.currentVideoData.serverId}`;
+        history.replaceState({ videoId: state.currentVideoData.serverId, index: index }, '', newUrl);
+    }
 }
 
 function pauseAllVideos(){
@@ -753,15 +864,15 @@ function autoPlayCurrentVideo(){
     const feedItem = state.currentVideoEl.closest('.feed-item');
     const pauseIcon = feedItem?.querySelector('.video-pause-icon');
     
-    // 默认不静音，直接播放
-    state.currentVideoEl.muted = false;
+    // 使用全局静音状态
+    state.currentVideoEl.muted = state.globalMuted;
     
-    // 更新声音按钮图标为有声音状态
+    // 更新声音按钮图标
     const muteBtn = feedItem?.querySelector('[data-action="mute"]');
     if (muteBtn) {
         const iconEl = muteBtn.querySelector('.video-action__icon');
         if (iconEl) {
-            iconEl.innerHTML = iconSvg("sound");
+            iconEl.innerHTML = iconSvg(state.globalMuted ? "muted" : "sound");
         }
     }
     
@@ -773,12 +884,16 @@ function autoPlayCurrentVideo(){
         console.log("自动播放被阻止:", error);
         // 如果浏览器阻止了有声音的自动播放，尝试静音播放
         state.currentVideoEl.muted = true;
-        if (muteBtn) {
-            const iconEl = muteBtn.querySelector('.video-action__icon');
+        state.globalMuted = true; // 更新全局静音状态
+        
+        // 更新所有静音按钮的图标
+        $all('[data-action="mute"]', el.feed).forEach(btn => {
+            const iconEl = btn.querySelector('.video-action__icon');
             if (iconEl) {
                 iconEl.innerHTML = iconSvg("muted");
             }
-        }
+        });
+        
         state.currentVideoEl.play().then(() => {
             if (pauseIcon) pauseIcon.classList.remove('video-pause-icon--visible');
             toast("浏览器阻止了自动播放声音，已静音播放");
@@ -1483,14 +1598,106 @@ function bindGlobalEvents(){
     });
 
     // Sidebar 点击事件
-    el.navExplore?.addEventListener("click", () => {
+    el.navExplore?.addEventListener("click", async () => {
+        // 重新加载所有视频
+        await fetchVideoList(1, false);
         showPage("preview");
         setNavActive(el.navExplore);
+        
+        // 恢复页面标题
+        const pageTitle = document.querySelector('.page__title');
+        const pageSubtitle = document.querySelector('.page__subtitle');
+        if (pageTitle) pageTitle.textContent = "发现";
+        if (pageSubtitle) pageSubtitle.textContent = "点击任意视频进入全屏瀑布流播放";
+        
+        // 移除管理按钮
+        removeManageButtons();
+        
+        // 确保退出管理模式
+        if (state.isManageMode) {
+            exitManageMode();
+        }
     });
     
-    el.navFav.addEventListener("click", () => {
-        toast("收藏功能入口（占位）");
-        setNavActive(el.navFav);
+    el.navFav.addEventListener("click", async () => {
+        // 检查是否登录
+        if (!state.isLoggedIn) {
+            toast("请先登录");
+            showAuthPage();
+            return;
+        }
+        
+        // 获取当前用户的视频列表
+        const userId = state.currentUser?.id;
+        if (!userId) {
+            toast("无法获取用户信息");
+            return;
+        }
+        
+        try {
+            const token = localStorage.getItem("cwatchToken");
+            const res = await fetch(`http://localhost:5000/api/user/${userId}/videos?page=1&page_size=100`, {
+                headers: {
+                    "Authorization": `Bearer ${token}`
+                }
+            });
+            
+            if (!res.ok) {
+                throw new Error("获取视频列表失败");
+            }
+            
+            const data = await res.json();
+            
+            // 转换服务器数据格式为前端格式
+            const userVideos = (data.videos || []).map(v => ({
+                id: `server_${v.id}`,
+                serverId: v.id,
+                src: v.url,
+                url_720p: v.url_720p,
+                url_1080p: v.url_1080p,
+                title: v.title || "未命名视频",
+                author: `@${v.username || "用户"}`,
+                likes: v.likes || 0,
+                comments: v.comments || 0,
+                shares: 0,
+                thumbText: "▶",
+                coverUrl: v.cover_url,
+                createdAt: v.created_at || "",
+                commentItems: [],
+                isLiked: v.is_liked || false,
+            }));
+            
+            // 更新全局数据源
+            DATA.videos = userVideos;
+            
+            // 重新渲染预览网格
+            renderPreviewGrid(DATA.videos, false);
+            
+            // 显示预览页
+            showPage("preview");
+            setNavActive(el.navFav);
+            
+            // 更新页面标题
+            const pageTitle = document.querySelector('.page__title');
+            const pageSubtitle = document.querySelector('.page__subtitle');
+            if (pageTitle) pageTitle.textContent = "我的视频";
+            if (pageSubtitle) pageSubtitle.textContent = `共 ${userVideos.length} 个视频`;
+            
+            // 创建并显示管理按钮
+            createManageButtons();
+            
+            // 确保退出管理模式
+            if (state.isManageMode) {
+                exitManageMode();
+            }
+            
+            if (userVideos.length === 0) {
+                toast("您还没有上传视频");
+            }
+        } catch (err) {
+            console.error("获取用户视频列表失败:", err);
+            toast("获取视频列表失败");
+        }
     });
     
     el.navSetting.addEventListener("click", () => {
@@ -1541,9 +1748,74 @@ async function init(){
     
     console.log("登录状态检查完成:", state.isLoggedIn ? "已登录" : "未登录");
     
-    // 无论是否登录，都初始化应用（允许未登录用户浏览视频）
-    console.log("初始化应用，显示首页");
-    initApp();
+    // 检查 URL 参数，如果有 video_id 则直接打开播放器页面
+    const urlParams = new URLSearchParams(window.location.search);
+    const videoId = urlParams.get('video_id');
+    
+    if (videoId) {
+        // 有视频ID参数，直接初始化为播放器模式
+        console.log("URL中包含video_id参数:", videoId, "直接打开播放器页面");
+        await initAppWithVideo(parseInt(videoId));
+    } else {
+        // 没有视频ID参数，正常初始化显示首页
+        console.log("初始化应用，显示首页");
+        await initApp();
+    }
+}
+
+// 初始化应用并直接打开指定视频
+async function initAppWithVideo(videoId) {
+    // 先加载视频列表
+    if (!state.previewRendered) {
+        await fetchVideoList(1, false);
+        state.previewRendered = true;
+        setupScrollLoadMore();
+    }
+    
+    // 只在第一次初始化时绑定全局事件
+    if (!state.eventsInitialized) {
+        bindGlobalEvents();
+        state.eventsInitialized = true;
+    }
+    
+    // 查找对应的视频索引
+    const index = DATA.videos.findIndex(v => v.serverId === videoId);
+    console.log("查找视频索引结果:", index, "视频总数:", DATA.videos.length);
+    
+    if (index !== -1) {
+        // 找到视频，直接显示播放器页面
+        showPage("player");
+        
+        // 渲染播放器feed
+        if (!el.feed.dataset.rendered) {
+            renderFeed(DATA.videos);
+            initPlayerAutoPlayObserver();
+            el.feed.dataset.rendered = "1";
+        }
+        
+        // 滚动到指定视频
+        const items = $all(".feed-item", el.feed);
+        const target = items[index];
+        if (target) target.scrollIntoView({ behavior: "auto", block: "start" });
+        
+        // 设置当前状态并自动播放
+        setCurrentByIndex(index);
+        
+        setTimeout(() => {
+            if (state.currentVideoEl) {
+                autoPlayCurrentVideo();
+            }
+        }, 100);
+    } else {
+        // 找不到视频，显示首页并提示
+        console.log("未找到对应的视频，显示首页");
+        showPage("preview");
+        history.replaceState({}, '', window.location.pathname);
+        toast("视频不存在或已被删除");
+    }
+    
+    // hint 自动淡出
+    setTimeout(() => { if (el.hint) el.hint.style.opacity = "0.35"; }, 2500);
 }
 
 init();
@@ -1927,10 +2199,71 @@ document.addEventListener("click", (e) => {
     }
 });
 
+// 显示个人信息模态框
+function showUserInfoModal() {
+    if (!state.currentUser) {
+        toast("请先登录");
+        return;
+    }
+    
+    const modal = document.getElementById('userInfoModal');
+    const avatar = document.getElementById('userInfoAvatar');
+    const username = document.getElementById('userInfoUsername');
+    const userId = document.getElementById('userInfoId');
+    const createdAt = document.getElementById('userInfoCreatedAt');
+    
+    // 设置头像
+    avatar.innerHTML = '';
+    if (state.currentUser.avatar_url) {
+        const img = document.createElement('img');
+        img.src = state.currentUser.avatar_url;
+        img.alt = '头像';
+        avatar.appendChild(img);
+    } else {
+        const initial = state.currentUser.username ? state.currentUser.username.charAt(0).toUpperCase() : 'U';
+        avatar.innerHTML = `<span>${initial}</span>`;
+    }
+    
+    // 设置用户信息
+    username.textContent = state.currentUser.username || '-';
+    userId.textContent = state.currentUser.id || '-';
+    
+    // 格式化注册时间
+    if (state.currentUser.created_at) {
+        const date = new Date(state.currentUser.created_at);
+        createdAt.textContent = date.toLocaleDateString('zh-CN', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+    } else {
+        createdAt.textContent = '-';
+    }
+    
+    // 显示模态框
+    modal.hidden = false;
+}
+
+// 关闭个人信息模态框
+function closeUserInfoModal() {
+    const modal = document.getElementById('userInfoModal');
+    modal.hidden = true;
+}
+
+// 绑定关闭按钮事件
+document.getElementById('userInfoModalClose').addEventListener('click', closeUserInfoModal);
+
+// 点击背景关闭
+document.getElementById('userInfoModal').addEventListener('click', (e) => {
+    if (e.target.classList.contains('user-info-modal__backdrop')) {
+        closeUserInfoModal();
+    }
+});
+
 // 点击个人信息
 el.dropdownUserInfo.addEventListener("click", () => {
     el.avatarDropdown.hidden = true;
-    toast(`当前用户：${state.currentUser.username}`);
+    showUserInfoModal();
 });
 
 // 点击退出登录
@@ -2262,3 +2595,282 @@ el.uploadDropzone.addEventListener("drop", (e) => {
     const file = e.dataTransfer.files[0];
     if (file) handleFileSelect(file);
 });
+
+
+/* =========================
+   18) URL 同步 - 浏览器前进/后退支持
+========================= */
+// 监听浏览器前进/后退按钮
+window.addEventListener('popstate', (event) => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const videoId = urlParams.get('video_id');
+    
+    if (videoId) {
+        // 有 video_id 参数，打开对应视频
+        const index = DATA.videos.findIndex(v => v.serverId === parseInt(videoId));
+        if (index !== -1) {
+            // 不使用 openPlayerAt，避免再次 pushState
+            showPage("player");
+            
+            // 确保 feed 已渲染
+            if (!el.feed.dataset.rendered) {
+                renderFeed(DATA.videos);
+                initPlayerAutoPlayObserver();
+                el.feed.dataset.rendered = "1";
+            }
+            
+            // 滚动到指定视频
+            const items = $all(".feed-item", el.feed);
+            const target = items[index];
+            if (target) target.scrollIntoView({ behavior: "auto", block: "start" });
+            
+            // 设置当前状态并自动播放
+            setCurrentByIndex(index);
+            
+            setTimeout(() => {
+                if (state.currentVideoEl) {
+                    autoPlayCurrentVideo();
+                }
+            }, 100);
+        }
+    } else {
+        // 没有参数，回到首页
+        showPage("preview");
+    }
+});
+
+
+/* =========================
+   管理模式功能
+========================= */
+
+// 创建管理按钮
+function createManageButtons() {
+    // 检查是否已存在
+    if (document.getElementById('pageActions')) {
+        return;
+    }
+    
+    // 创建管理按钮容器
+    const pageActions = document.createElement('div');
+    pageActions.className = 'page__actions';
+    pageActions.id = 'pageActions';
+    
+    // 创建管理按钮
+    const manageBtn = document.createElement('button');
+    manageBtn.className = 'page__manage-btn';
+    manageBtn.id = 'manageBtn';
+    manageBtn.textContent = '管理';
+    
+    // 创建删除选中按钮
+    const deleteBatchBtn = document.createElement('button');
+    deleteBatchBtn.className = 'page__delete-btn';
+    deleteBatchBtn.id = 'deleteBatchBtn';
+    deleteBatchBtn.textContent = '删除选中';
+    deleteBatchBtn.hidden = true;
+    
+    // 创建取消按钮
+    const cancelManageBtn = document.createElement('button');
+    cancelManageBtn.className = 'page__cancel-btn';
+    cancelManageBtn.id = 'cancelManageBtn';
+    cancelManageBtn.textContent = '取消';
+    cancelManageBtn.hidden = true;
+    
+    // 添加到容器
+    pageActions.appendChild(manageBtn);
+    pageActions.appendChild(deleteBatchBtn);
+    pageActions.appendChild(cancelManageBtn);
+    
+    // 添加到页面头部
+    const pageHeader = document.querySelector('.page__header');
+    if (pageHeader) {
+        pageHeader.appendChild(pageActions);
+    }
+    
+    // 更新el引用
+    el.pageActions = pageActions;
+    el.manageBtn = manageBtn;
+    el.deleteBatchBtn = deleteBatchBtn;
+    el.cancelManageBtn = cancelManageBtn;
+    
+    // 绑定事件
+    manageBtn.addEventListener('click', enterManageMode);
+    cancelManageBtn.addEventListener('click', exitManageMode);
+    deleteBatchBtn.addEventListener('click', batchDeleteVideos);
+}
+
+// 移除管理按钮
+function removeManageButtons() {
+    const pageActions = document.getElementById('pageActions');
+    if (pageActions) {
+        pageActions.remove();
+        el.pageActions = null;
+        el.manageBtn = null;
+        el.deleteBatchBtn = null;
+        el.cancelManageBtn = null;
+    }
+}
+
+// 切换视频选中状态
+function toggleVideoSelection(card, videoId) {
+    const checkbox = card.querySelector('.preview-card__checkbox');
+    const index = state.selectedVideoIds.indexOf(videoId);
+    
+    if (index > -1) {
+        // 取消选中
+        state.selectedVideoIds.splice(index, 1);
+        checkbox.classList.remove('preview-card__checkbox--checked');
+    } else {
+        // 选中
+        state.selectedVideoIds.push(videoId);
+        checkbox.classList.add('preview-card__checkbox--checked');
+    }
+    
+    // 更新删除按钮状态
+    updateDeleteButtonState();
+}
+
+// 更新删除按钮状态
+function updateDeleteButtonState() {
+    if (state.selectedVideoIds.length > 0) {
+        el.deleteBatchBtn.hidden = false;
+        el.deleteBatchBtn.textContent = `删除选中 (${state.selectedVideoIds.length})`;
+    } else {
+        el.deleteBatchBtn.hidden = true;
+    }
+}
+
+// 进入管理模式
+function enterManageMode() {
+    state.isManageMode = true;
+    state.selectedVideoIds = [];
+    
+    // 显示取消和删除按钮，隐藏管理按钮
+    el.manageBtn.hidden = true;
+    el.cancelManageBtn.hidden = false;
+    
+    // 为所有卡片添加管理模式样式
+    $all('.preview-card', el.previewGrid).forEach(card => {
+        card.classList.add('preview-card--manage-mode');
+    });
+}
+
+// 退出管理模式
+function exitManageMode() {
+    state.isManageMode = false;
+    state.selectedVideoIds = [];
+    
+    // 显示管理按钮，隐藏取消和删除按钮
+    el.manageBtn.hidden = false;
+    el.cancelManageBtn.hidden = true;
+    el.deleteBatchBtn.hidden = true;
+    
+    // 移除所有卡片的管理模式样式和选中状态
+    $all('.preview-card', el.previewGrid).forEach(card => {
+        card.classList.remove('preview-card--manage-mode');
+        const checkbox = card.querySelector('.preview-card__checkbox');
+        if (checkbox) {
+            checkbox.classList.remove('preview-card__checkbox--checked');
+        }
+    });
+}
+
+// 批量删除视频
+async function batchDeleteVideos() {
+    if (state.selectedVideoIds.length === 0) {
+        toast("请先选择要删除的视频");
+        return;
+    }
+    
+    // 使用自定义确认对话框
+    const confirmed = await showConfirmDialog(
+        '确认删除',
+        `确定要删除选中的 ${state.selectedVideoIds.length} 个视频吗？此操作不可恢复。`
+    );
+    
+    if (!confirmed) {
+        return;
+    }
+    
+    try {
+        const token = localStorage.getItem("cwatchToken");
+        if (!token) {
+            toast("请先登录");
+            return;
+        }
+        
+        const res = await fetch("http://localhost:5000/api/videos/delete", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                video_ids: state.selectedVideoIds
+            })
+        });
+        
+        // 检查响应状态
+        if (!res.ok) {
+            // 尝试解析错误信息
+            try {
+                const errorData = await res.json();
+                throw new Error(errorData.error || "删除失败");
+            } catch (e) {
+                throw new Error(`删除失败 (HTTP ${res.status})`);
+            }
+        }
+        
+        // 解析成功响应
+        const data = await res.json();
+        
+        toast(`成功删除 ${data.deleted_count} 个视频`);
+        
+        // 退出管理模式
+        exitManageMode();
+        
+        // 重新加载视频列表
+        const userId = state.currentUser?.id;
+        if (userId) {
+            const token = localStorage.getItem("cwatchToken");
+            const res = await fetch(`http://localhost:5000/api/user/${userId}/videos?page=1&page_size=100`, {
+                headers: {
+                    "Authorization": `Bearer ${token}`
+                }
+            });
+            
+            if (res.ok) {
+                const data = await res.json();
+                const userVideos = (data.videos || []).map(v => ({
+                    id: `server_${v.id}`,
+                    serverId: v.id,
+                    src: v.url,
+                    url_720p: v.url_720p,
+                    url_1080p: v.url_1080p,
+                    title: v.title || "未命名视频",
+                    author: `@${v.username || "用户"}`,
+                    likes: v.likes || 0,
+                    comments: v.comments || 0,
+                    shares: 0,
+                    thumbText: "▶",
+                    coverUrl: v.cover_url,
+                    createdAt: v.created_at || "",
+                    commentItems: [],
+                    isLiked: v.is_liked || false,
+                }));
+                
+                DATA.videos = userVideos;
+                renderPreviewGrid(DATA.videos, false);
+                
+                // 更新页面标题
+                const pageTitle = document.querySelector('.page__title');
+                const pageSubtitle = document.querySelector('.page__subtitle');
+                if (pageTitle) pageTitle.textContent = "我的视频";
+                if (pageSubtitle) pageSubtitle.textContent = `共 ${userVideos.length} 个视频`;
+            }
+        }
+    } catch (err) {
+        console.error("删除视频失败:", err);
+        toast(err.message || "删除失败");
+    }
+}

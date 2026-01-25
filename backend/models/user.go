@@ -1,6 +1,8 @@
 package models
 
 import (
+	"backend/config"
+	"fmt"
 	"gorm.io/gorm"
 )
 
@@ -12,6 +14,11 @@ type User struct {
 	AvatarURL string `gorm:"default:'http://101.132.25.34:9000/cwatch/c.png'" json:"avatar_url"` // 头像URL
 	Email     string `json:"email"`
 	Phone     string `json:"phone"`
+}
+
+// GetDefaultAvatarURL 获取默认头像URL
+func GetDefaultAvatarURL() string {
+	return fmt.Sprintf("http://%s:%s/cwatch/c.png", config.MinIOHost, config.MinIOPort)
 }
 
 // 视频状态常量

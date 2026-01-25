@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"backend/config"
 	"context"
 	"fmt"
 	"log"
@@ -15,23 +16,20 @@ var mc *minio.Client
 
 // MinIO 配置
 const (
-	MinioBucket       = "cwatch"        // 存储桶名称
-	MinioEndpoint     = "101.132.25.34:9000" // MinIO 服务地址
+	MinioBucket       = "cwatch"             // 存储桶名称
 	UploadURLExpiry   = 15 * time.Minute     // 上传URL有效期
 	DownloadURLExpiry = 24 * time.Hour       // 下载URL有效期
 )
 
 // InitMinIO 初始化MinIO
 func InitMinIO() error {
-	// MinIO 凭证
-	accessKeyID := "minioadmin"
-	secretAccessKey := "minio111111"
-	useSSL := false
-
+	// 构建 MinIO 服务地址
+	minioEndpoint := fmt.Sprintf("%s:%s", config.MinIOHost, config.MinIOPort)
+	
 	// 创建 MinIO 客户端实例
-	client, err := minio.New(MinioEndpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(accessKeyID, secretAccessKey, ""),
-		Secure: useSSL,
+	client, err := minio.New(minioEndpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(config.MinIOAccessKey, config.MinIOSecretKey, ""),
+		Secure: false,
 	})
 	if err != nil {
 		return err
@@ -101,7 +99,8 @@ func GenerateUploadURL(filename string) (string, error) {
 func GenerateDownloadURL(filename string) (string, error) {
 	// 方案1：生成永久的公开URL（推荐用于视频播放）
 	// 格式：http://minio-server:port/bucket-name/filename
-	permanentURL := fmt.Sprintf("http://%s/%s/%s", MinioEndpoint, MinioBucket, filename)
+	minioEndpoint := fmt.Sprintf("%s:%s", config.MinIOHost, config.MinIOPort)
+	permanentURL := fmt.Sprintf("http://%s/%s/%s", minioEndpoint, MinioBucket, filename)
 	return permanentURL, nil
 	
 	// 方案2：如果需要预签名URL，可以设置更长的过期时间

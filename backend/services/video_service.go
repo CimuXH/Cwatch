@@ -227,3 +227,53 @@ func (s *VideoService) GetVideoList(page, pageSize int, username string) (*Video
 		PageSize: pageSize,
 	}, nil
 }
+
+// GetUserVideoList	获取某个用户的视频列表
+// 参数：页码、每页数量、用户ID
+// 返回：视频列表响应
+func (s *VideoService) GetUserVideoList(page, pageSize int, userID uint) (*VideoListResponse, error) {
+	// 限制每页数量
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 50 {
+		pageSize = 12
+	}
+
+	// 调用工具层获取某个用户的视频列表
+	videos, total, err := utils.GetUserVideoList(userID, page, pageSize)
+	if err != nil {
+		return nil, errors.New("获取用户视频列表失败")
+	}
+
+	return &VideoListResponse{
+		Videos:   videos,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
+}
+
+// DeleteUserVideos 删除某个用户的视频列表
+// 参数：用户名、视频列表
+// 返回：错误信息
+func (s *VideoService) DeleteUserVideos(username string, videoids []uint) error {
+	// 验证视频ID列表不为空
+	if len(videoids) == 0 {
+		return errors.New("视频ID列表不能为空")
+	}
+
+	// 获取用户信息
+	user, err := utils.GetUserByUsername(username)
+	if err != nil {
+		return errors.New("用户不存在")
+	}
+
+	// 删除视频
+	err = utils.DeleteUserVideos(user.ID, videoids)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}

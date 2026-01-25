@@ -2,6 +2,8 @@ package utils
 
 import (
 	"backend/models"
+	"backend/config"
+	"fmt"
 	"log"
 	"errors"
 	"gorm.io/driver/mysql"
@@ -15,7 +17,12 @@ var db *gorm.DB
 func InitMySQL() error {
 	// 配置MySQL连接字符串
 	// 格式：用户名:密码@tcp(主机:端口)/数据库名?参数
-	dsn := "root:mysql111111@tcp(101.132.25.34:3306)/cwatch?charset=utf8mb4&parseTime=True&loc=Local"
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		config.MySQLUsername,
+		config.MySQLPassword,
+		config.MySQLHost,
+		config.MySQLPort,
+		config.MySQLDatabase)
 
 	// 连接数据库
 	conn, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
@@ -158,6 +165,81 @@ func GetVideoList(page, pageSize int) ([]VideoListItem, int64, error) {
 
 	return result, total, nil
 }
+
+
+// GetUserVideoList 获取 某个用户 的视频列表（分页）
+// page: 页码（从1开始）
+// pageSize: 每页数量
+func GetUserVideoList(user_id uint, page, pageSize int) ([]VideoListItem, int64, error){
+	var total int64
+	var videos []models.Video
+	
+	// 只查询该用户已上传完成的视频
+	query := db.Model(&models.Video{}).Where("user_id = ? and status = ?",user_id, models.VideoStatusUploaded)
+
+	// 获取该用户的视频总是
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// 分页查询，按照时间倒叙
+	offset := (page - 1)*pageSize
+	if err := query.Preload("User").Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&videos).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// 组装返回数据
+	result := make([]VideoListItem, 0, len(videos))
+	for _, v := range videos {
+
+		// 获取点赞数
+		var likeCount int64
+		db.Model(&models.Like{}).Where("video_id = ?", v.ID).Count(&likeCount)
+
+		// 获取评论数
+		var commentCount int64
+		db.Model(&models.Comment{}).Where("video_id = ?", v.ID).Count(&commentCount)
+
+		result = append(result, VideoListItem{
+			ID:          v.ID,
+			Title:       v.Title,
+			Description: v.Description,
+			URL:         v.URL,      // 原视频URL
+			URL720p:     v.URL720p,  // 720p视频URL
+			URL1080p:    v.URL1080p, // 1080p视频URL
+			CoverURL:    v.CoverURL,
+			UserID:      v.UserID,
+			Username:    v.User.Username,
+			AvatarURL:   v.User.AvatarURL,
+			CreatedAt:   v.CreatedAt.Format("2006-01-02 15:04"),
+			Likes:       likeCount,
+			Comments:    commentCount,
+		})
+	}
+
+	return result, total, nil
+	
+}
+
+// DeleteUserVideos 删除 某个用户 的 视频列表
+// user_id, videoids : 用户id，视频id列表
+func DeleteUserVideos(user_id uint, videoids []uint) error {
+    result := db.Where("user_id = ? AND id IN ?", user_id, videoids).Delete(&models.Video{})
+    
+    // 1. 检查系统错误
+    if result.Error != nil {
+        log.Printf("删除视频失败: %v", result.Error)
+        return errors.New("数据库操作失败")
+    }
+    
+    // 2. 检查是否真的删除了记录
+    if result.RowsAffected == 0 {
+        return errors.New("视频不存在或无权删除")
+    }
+    
+    return nil
+}
+
 
 // ====================================== 点赞相关数据库操作 ===============================================
 

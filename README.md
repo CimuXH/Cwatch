@@ -31,19 +31,21 @@ Docker - （服务器中）
 ```bash
 
 /backend
-  /controllers
-  /routes      
-  /models      # 数据结构
+  /config     # 服务的用户名和密码配置
+  /controllers  # 控制层
+  /routes      # 路由
+  /models      # 数据模型结构
   /service    # 业务层
   /middlewares # jwt
   /utils      # mysql,redis,minio,token,bcrypt,rabbitmq
-  main.go
+  main.go     # 主函数
 /web          # 前端页面（简单 HTML/JS/CSS）
   /js
   /css
   index.html
 /worker		# 消费者处理视频封面等操作
-  main.go
+  /config     # 服务的用户名和密码配置
+  main.go   # 消费者
 
 
 README.md

@@ -44,5 +44,10 @@ func SetupRoutes(router *gin.Engine) {
 		// 评论相关路由
 		protected.POST("/video/comment/:videoid", controllers.AddComment) // 添加评论
 		protected.DELETE("/video/comment/:commentid", controllers.DeleteComment) // 删除评论
+
+		// 获取某个用户的视频列表
+		protected.GET("/user/:userid/videos", controllers.GetUserVideoList)
+		// 删除视频（直接使用post，不使用delete了）批量删除视频
+		protected.POST("/videos/delete", controllers.DeleteUserVideos)
 	}
 }

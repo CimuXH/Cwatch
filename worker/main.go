@@ -3,6 +3,7 @@ package main
 // RabbitMQ 消费者
 
 import (
+	"worker/config"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -23,17 +24,10 @@ import (
 // 配置常量
 const (
 	// RabbitMQ 配置
-	RabbitMQURL = "amqp://admin:rabbitmq111111@101.132.25.34:5672/"
-	QueueName   = "video_processing"
+	QueueName = "video_processing"
 
 	// MinIO 配置
-	MinioEndpoint   = "101.132.25.34:9000"
-	MinioBucket     = "cwatch"
-	MinioAccessKey  = "minioadmin"
-	MinioSecretKey  = "minio111111"
-
-	// MySQL 配置
-	MySQLDSN = "root:mysql111111@tcp(101.132.25.34:3306)/cwatch?charset=utf8mb4&parseTime=True&loc=Local"
+	MinioBucket = "cwatch"
 
 	// FFmpeg 配置（Windows路径）
 	FFmpegPath = "E:/soft/ffmpeg-8.0.1-essentials_build/bin/ffmpeg.exe"
@@ -67,7 +61,13 @@ func main() {
 	log.Println("MinIO 连接成功")
 
 	// 连接到 RabbitMQ
-	conn, err := amqp.Dial(RabbitMQURL)
+	rabbitMQURL := fmt.Sprintf("amqp://%s:%s@%s:%s/",
+		config.RabbitMQUsername,
+		config.RabbitMQPassword,
+		config.RabbitMQHost,
+		config.RabbitMQPort)
+	
+	conn, err := amqp.Dial(rabbitMQURL)
 	if err != nil {
 		log.Fatal("RabbitMQ 连接失败:", err)
 	}
@@ -163,7 +163,14 @@ func main() {
 
 // initMySQL 初始化 MySQL 连接
 func initMySQL() error {
-	conn, err := gorm.Open(mysql.Open(MySQLDSN), &gorm.Config{})
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		config.MySQLUsername,
+		config.MySQLPassword,
+		config.MySQLHost,
+		config.MySQLPort,
+		config.MySQLDatabase)
+	
+	conn, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return err
 	}
@@ -173,8 +180,10 @@ func initMySQL() error {
 
 // initMinIO 初始化 MinIO 客户端
 func initMinIO() error {
-	client, err := minio.New(MinioEndpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(MinioAccessKey, MinioSecretKey, ""),
+	minioEndpoint := fmt.Sprintf("%s:%s", config.MinIOHost, config.MinIOPort)
+	
+	client, err := minio.New(minioEndpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(config.MinIOAccessKey, config.MinIOSecretKey, ""),
 		Secure: false,
 	})
 	if err != nil {
@@ -425,7 +434,8 @@ func uploadToMinIO(localPath, filename, contentType string) (string, error) {
 	}
 
 	// 生成永久访问URL
-	fileURL := fmt.Sprintf("http://%s/%s/%s", MinioEndpoint, MinioBucket, filename)
+	minioEndpoint := fmt.Sprintf("%s:%s", config.MinIOHost, config.MinIOPort)
+	fileURL := fmt.Sprintf("http://%s/%s/%s", minioEndpoint, MinioBucket, filename)
 	return fileURL, nil
 }
 
