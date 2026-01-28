@@ -43,7 +43,8 @@ type Video struct {
 	User        User   `gorm:"foreignKey:UserID" json:"-"`         // 与User模型建立关联
 	Status      int    `gorm:"default:0" json:"status"`            // 视频状态
 	FileName    string `json:"file_name"`                          // 存储的文件名（UUID生成）
-}
+	LikeCount 	uint   `json:"like_count" gorm:"index"`			   // 视频的点赞量，添加普通索引
+}		
 
 // Comment 评论模型
 type Comment struct {

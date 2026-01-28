@@ -1,118 +1,253 @@
-#### 畅看项目(Cwatch)
+# 畅看项目 (Cwatch)
 
-自用项目。
-本项目用于gin以及相关中间件的巩固学习。
-本项目是一个视频相关Web项目，涉及功能：注册登录，视频上传，点赞评论等功能
+**注**：本项目用于自己学习和实践 Go + Gin 框架以及相关中间件技术。
 
-go-1.24.9 (win中)
+> 一个基于 Go + Gin 的短视频分享平台
 
-FFmpeg-8.0.1（win中）
+## 📖 项目简介
 
-Docker - （服务器中）
+本项目是一个全栈短视频分享平台，支持视频上传、播放、点赞、评论、热门视频排行等核心功能。采用微服务架构，使用消息队列和缓存技术解决高并发场景下的性能问题。
 
-​	- Mysql-8.0
+## ✨ 核心功能
 
-​	- Redis-8.0
+### 用户功能
+- ✅ 用户注册/登录（JWT认证）
+- ✅ 用户信息管理
+- ✅ 个人视频管理
 
-​	- RabbitMQ-3.11-management
+### 视频功能
+- ✅ 视频上传（支持多种格式：mp4/webm/mov/avi/mkv）
+- ✅ 视频播放（支持多清晰度：原画/1080p/720p）
+- ✅ 视频列表浏览（分页加载）
+- ✅ 热门视频排行（按点赞数排序）
+- ✅ 自动生成视频封面
 
-​	- Nginx-1.28
+### 互动功能
+- ✅ 点赞/取消点赞（支持高并发）
+- ✅ 评论/删除评论
+- ✅ 视频分享
+- ✅ 实时点赞数统计
 
-​	- MinIO-RELEASE.2025-09-07T16-13-09Z
+### 播放器功能
+- ✅ 视频进度条拖动
+- ✅ 播放/暂停控制
+- ✅ 音量控制（全局静音）
+- ✅ 清晰度切换
+- ✅ 双击点赞动画
 
+### 首页展示
+![alt text](image.png)
 
+## 🛠️ 技术栈
 
+### 后端技术
+- **Go 1.24.9** - 主要开发语言
+- **Gin** - Web框架，构建RESTful API
+- **GORM** - ORM框架，数据库操作
+- **MySQL 8.0** - 关系型数据库，存储用户、视频、评论、点赞数据
+- **Redis 8.0** - 缓存中间件，存储热点数据（点赞数、热门视频排行）
+- **RabbitMQ 3.11** - 消息队列，异步处理点赞、视频处理任务
+- **MinIO** - 对象存储服务，存储视频文件和封面图
+- **JWT** - 用户认证和授权
+- **Bcrypt** - 密码加密
+- **FFmpeg 8.0.1** - 视频处理（生成封面、转码多清晰度）
 
+### 前端技术
+- **原生 JavaScript (Vanilla JS)** - 无框架开发
+- **HTML5 + CSS3** - 页面结构和样式
+- **HTML5 Video API** - 视频播放控制
+- **Fetch API** - 前后端数据交互
 
+### 基础设施
+- **Docker + Docker Compose** - 容器化部署
+- **Nginx 1.28** - 反向代理和静态资源服务
 
+## 🏗️ 架构设计
 
-**项目架构**
-
-```bash
-
-/backend
-  /config     # 服务的用户名和密码配置
-  /controllers  # 控制层
-  /routes      # 路由
-  /models      # 数据模型结构
-  /service    # 业务层
-  /middlewares # jwt
-  /utils      # mysql,redis,minio,token,bcrypt,rabbitmq
-  main.go     # 主函数
-/web          # 前端页面（简单 HTML/JS/CSS）
-  /js
-  /css
-  index.html
-/worker		# 消费者处理视频封面等操作
-  /config     # 服务的用户名和密码配置
-  main.go   # 消费者
-
-
-README.md
-
+### 系统架构
+```
+┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+│   前端页面   │ ───> │  Backend API │ ───> │   MySQL     │
+│  (Web/JS)   │      │   (Gin)     │      │  (数据库)    │
+└─────────────┘      └─────────────┘      └─────────────┘
+                            │                      │
+                            ├──────────────────────┤
+                            │                      │
+                     ┌──────▼──────┐        ┌─────▼──────┐
+                     │   Redis     │        │  RabbitMQ  │
+                     │  (缓存)     │        │ (消息队列)  │
+                     └─────────────┘        └─────┬──────┘
+                                                   │
+                     ┌─────────────┐        ┌─────▼──────┐
+                     │   MinIO     │ <───── │   Worker   │
+                     │ (对象存储)   │        │  (消费者)   │
+                     └─────────────┘        └────────────┘
 ```
 
-在服务器中使用Docker Compose部署MySQL，Redis，MinIO，Nginx1.28，RabbitMQ3.11-management
+### 分层架构
+- **Controller层** - 处理HTTP请求，参数验证
+- **Service层** - 业务逻辑处理
+- **Model层** - 数据模型定义
+- **Utils层** - 工具函数（数据库、缓存、存储、消息队列）
 
-**每日计划（可酌情进行适当调整）**
-"第1天：项目设置与需求分析
-确定项目的基本功能需求：视频上传、播放、点赞、评论、用户注册登录等。
-创建项目结构，配置Go、Gin、MySQL、Redis、RabbitMQ等相关环境。
-创建数据库模型设计，包括用户、视频、评论、点赞等表结构。"
+## 🎯 技术亮点
 
-"第2天：用户系统设计
-实现用户注册、登录、登出功能（使用JWT做身份验证）。
-用户信息存储（例如昵称、头像、个人信息等）。
-使用Redis缓存用户会话。"
+### 1. 高并发点赞优化
+**问题**：大量用户同时点赞会导致数据库压力过大
 
-"第3天：视频上传与存储
-设计并实现视频上传接口（可以先简单实现，后期可以优化）。
-配置Docker容器来部署视频存储服务（例如MinIO作为对象存储）。
-编写视频上传功能，前端可以通过API上传视频，后端存储视频文件。"
+**解决方案**：
+- Redis缓存点赞数，快速响应用户请求（毫秒级）
+- RabbitMQ异步队列，批量更新MySQL
+- 使用原子操作（INCR/DECR）防止并发冲突
+- 最终一致性模型，保证数据准确性
 
-"第4天：视频播放与获取
-实现视频获取接口，支持分页返回视频列表（按照点赞数、时间等排序）。
-前端与后端对接，视频可以正常播放。
-使用MySQL存储视频信息（视频URL、封面图、标题等）。"
+### 2. 视频存储与分发
+**问题**：大文件存储和高并发访问
 
-"第5天：评论与点赞功能
-实现评论功能，用户可以对视频进行评论。
-实现点赞功能，用户可以对视频进行点赞。
-存储评论和点赞数据在MySQL，并实现相关的API接口。"
+**解决方案**：
+- MinIO对象存储，支持分布式扩展
+- 预签名URL，安全上传下载
+- 多清晰度转码（720p/1080p），适配不同网络环境
+- CDN加速（可扩展）
 
-"第6天：消息队列与异步处理
-使用RabbitMQ实现异步任务处理（如：处理视频转码、生成封面图等）。
-创建消息队列生产者和消费者，实现任务异步处理。"
+### 3. 异步视频处理
+**问题**：视频上传后需要生成封面、转码，耗时长
 
-"第7天：功能整合与初步测试
-整合已经完成的功能：注册、视频上传、播放、点赞、评论等。
-测试各个功能模块，确保它们在同一个系统中协同工作。"
+**解决方案**：
+- RabbitMQ异步任务队列
+- Worker独立服务处理视频任务
+- 用户上传后立即返回，后台异步处理
+- FFmpeg高效视频处理
 
-"第8天：视频转码与封面生成
-添加视频转码功能（例如使用FFmpeg来生成不同清晰度的视频文件）。
-生成视频封面图，并保存在存储服务中。"
+### 4. 数据一致性保证
+**问题**：Redis缓存与MySQL数据不一致
 
-"第9天：用户中心与视频管理
-实现用户中心，用户可以查看自己的视频、评论、点赞等。
-实现视频的管理功能，用户可以删除自己上传的视频。"
+**解决方案**：
+- 最终一致性模型
+- Worker定期同步Redis数据到MySQL
+- 事务保证videos表和likes表操作原子性
+- 失败重试机制
 
-"第10天：实现视频推荐功能
-使用简单的推荐算法（如基于用户行为的推荐）来推荐视频给用户。
-结合Redis进行缓存优化，提高视频推荐的性能。"
+## 🔧 环境要求
 
-"第11天：流量控制与限流
-使用Redis实现接口限流，防止恶意请求和过度使用API。
-对上传视频、评论、点赞等操作进行流量控制。"
+- **Go 1.24.9** (Windows开发环境)
+- **FFmpeg 8.0.1** (Windows开发环境)
+- **Docker + Docker Compose** (服务器部署)
+  - MySQL 8.0
+  - Redis 8.0
+  - RabbitMQ 3.11-management
+  - Nginx 1.28
+  - MinIO RELEASE.2025-09-07T16-13-09Z
 
-"第12天：日志与监控
-使用日志系统记录关键操作（如视频上传、用户登录等）。
-集成简单的监控系统（如Prometheus + Grafana）来监控后端服务的性能。"
 
-"第13天：代码重构与优化
-对代码进行重构，提升代码质量。
-优化数据库查询，确保系统在高并发下依然高效。"
 
-"第14天：最终测试与部署
-对整个系统进行压力测试、功能测试，确保无重大bug。
-部署项目到生产环境，可以使用Docker容器化应用并部署在云服务器或本地服务器上。"
+
+## 📁 项目结构
+
+```bash
+/backend              # 后端服务
+  /config            # 配置文件（数据库、Redis、MinIO等）
+  /controllers       # 控制层（处理HTTP请求）
+  /routes            # 路由定义
+  /models            # 数据模型（User、Video、Comment、Like）
+  /services          # 业务逻辑层
+  /middlewares       # 中间件（JWT认证）
+  /utils             # 工具函数（MySQL、Redis、MinIO、RabbitMQ）
+  main.go            # 主程序入口
+
+/web                 # 前端页面
+  /js                # JavaScript文件
+  /css               # 样式文件
+  index.html         # 主页面
+
+/worker              # 消费者服务（异步任务处理）
+  /config            # 配置文件
+  main.go            # 消费者主程序（处理视频封面生成、转码等）
+
+/compose             # Docker Compose配置文件
+  docker-compose.yml  # 配置文件
+
+README.md            # 项目说明文档
+```
+
+## 🚀 快速开始
+
+### 1. 环境准备
+
+#### 服务器端（Docker部署）
+```bash
+# 使用 Docker Compose 部署基础服务
+docker-compose up -d
+
+# 包含以下服务：
+# - MySQL 8.0
+# - Redis 8.0
+# - RabbitMQ 3.11-management
+# - MinIO
+# - Nginx 1.28
+```
+
+#### 开发环境（Windows）
+- 安装 Go 1.24.9
+- 安装 FFmpeg 8.0.1
+
+### 2. 配置文件
+
+修改 `backend/config/config.go` 和 `worker/config/config.go`，配置数据库、Redis、MinIO、RabbitMQ连接信息。
+
+### 3. 启动服务
+
+#### 启动后端API服务
+```bash
+cd backend
+go run main.go
+```
+
+#### 启动Worker消费者服务
+```bash
+cd worker
+go run main.go
+```
+
+
+## 📊 数据库设计
+
+### 核心表结构
+
+#### users 表（用户表）
+- id, username, password, avatar_url, created_at, updated_at
+
+#### videos 表（视频表）
+- id, title, url, url_720p, url_1080p, cover_url, user_id, like_count, status, created_at, updated_at
+
+#### likes 表（点赞表）
+- id, user_id, video_id, created_at
+
+#### comments 表（评论表）
+- id, user_id, video_id, content, created_at, updated_at
+
+## 🔐 API接口
+
+### 用户相关
+- `POST /api/register` - 用户注册
+- `POST /api/login` - 用户登录
+- `GET /api/user/:id` - 获取用户信息
+
+### 视频相关
+- `GET /api/videos` - 获取视频列表（支持分页）
+- `POST /api/videos/hot` - 获取热门视频
+- `GET /api/user/:id/videos` - 获取用户视频列表
+- `POST /api/video/upload-url` - 获取上传凭证
+- `POST /api/video/confirm-upload` - 确认上传完成
+- `DELETE /api/video/delete` - 删除视频
+
+### 互动相关
+- `POST /api/video/toggle-like` - 切换点赞状态
+- `GET /api/video/:id/comments` - 获取评论列表
+- `POST /api/video/comment/:id` - 发表评论
+- `DELETE /api/video/comment/:id` - 删除评论
+
+---
+
+
 

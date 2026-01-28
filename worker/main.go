@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -24,7 +23,8 @@ import (
 // 配置常量
 const (
 	// RabbitMQ 配置
-	QueueName = "video_processing"
+	QueueVideoName = "video_processing"
+	QueueVideoLikeName = "video_like_processing"   // 新增：点赞处理队列
 
 	// MinIO 配置
 	MinioBucket = "cwatch"
@@ -37,6 +37,14 @@ const (
 type VideoTask struct {
 	VideoID  uint   `json:"video_id"`
 	FileName string `json:"file_name"`
+}
+
+// LikeTask  点赞处理任务结构
+type LikeTask struct {
+	VideoID uint  `json:"video_id"`
+	UserID  uint  `json:"user_id"`
+	Delta   int   `json:"delta"` // +1 点赞；-1 取消
+	TS      int64 `json:"ts"`	// TS: time.Now().Unix() 时间戳
 }
 
 // 全局变量
@@ -76,90 +84,284 @@ func main() {
 
 	// =====================================连接工作准备完成=====================================
 
-	// 创建通道
-	ch, err := conn.Channel()
-	if err != nil {
-		log.Fatal("创建通道失败:", err)
-	}
-	defer ch.Close()
-
-	// 声明队列
-	q, err := ch.QueueDeclare(
-		QueueName,
-		true,  // durable
-		false, // autoDelete
-		false, // exclusive
-		false, // noWait
-		nil,   // arguments
-	)
-	if err != nil {
-		log.Fatal("声明队列失败:", err)
-	}
-
-	// 设置预取数量（一次只处理一个任务）
-	err = ch.Qos(
-		1,     // prefetchCount
-		0,     // prefetchSize
-		false, // global
-	)
-	if err != nil {
-		log.Fatal("设置 QoS 失败:", err)
-	}
-
-	// 开始消费消息
-	msgs, err := ch.Consume(
-		q.Name,
-		"",    // consumer
-		false, // autoAck: 手动确认
-		false, // exclusive
-		false, // noLocal
-		false, // noWait
-		nil,   // args
-	)
-	if err != nil {
-		log.Fatal("开始消费失败:", err)
-	}
-
-	log.Println("Worker 已启动，等待任务...")
-
-	// 持续监听消息
+	// 持续监听消息，阻塞主程序，持续处理任务
 	forever := make(chan bool)
+	
+	go startVideoConsumer(conn)	 // 处理视频消费者
 
-
-	// 启动多个消费者 goroutine，（如果只想启动一个消费者把for去掉就行）
-	for i := 0; i < 5; i++ {
-		go func(workerID int) {
-			log.Printf("Worker %d 启动", workerID)
-			
-			for d := range msgs {
-				log.Printf("Worker %d 收到任务: %s", workerID, d.Body)
-
-				// 解析任务
-				var task VideoTask
-				err := json.Unmarshal(d.Body, &task)
-				if err != nil {
-					log.Printf("Worker %d 解析任务失败: %v", workerID, err)
-					d.Nack(false, false) // 拒绝消息，不重新入队
-					continue
-				}
-
-				err = processVideo(task)  //处理视频（生成封面）
-				if err != nil {
-					log.Printf("Worker %d 处理视频失败: %v", workerID, err)
-					d.Nack(false, true) // 拒绝消息，重新入队
-					continue
-				}
-
-				// 确认消息
-				d.Ack(false)
-				log.Printf("Worker %d 任务完成: VideoID=%d", workerID, task.VideoID)
-			}
-		}(i)
-	}
-
+	go startLikeConsumer(conn)  // 处理点赞消费者
 
 	<-forever
 }
+
+// startVideoConsumer	=============视频处理的消费者==============	
+func startVideoConsumer(conn *amqp.Connection) {
+    log.Println("视频 Consumer 启动中...")
+
+    workerCount := 3
+
+    for i := 0; i < workerCount; i++ {
+        go func(workerID int) {
+            ch, err := conn.Channel()
+            if err != nil {
+                log.Printf("Worker %d 创建通道失败: %v", workerID, err)
+                return
+            }
+            defer ch.Close()
+
+            // 声明队列（建议所有 worker 都声明一遍，幂等）
+            q, err := ch.QueueDeclare(
+                QueueVideoName,
+                true,
+                false,
+                false,
+                false,
+                nil,
+            )
+            if err != nil {
+                log.Printf("Worker %d 声明队列失败: %v", workerID, err)
+                return
+            }
+
+            // 每个 worker 一次只拿一条未确认消息
+            if err := ch.Qos(1, 0, false); err != nil {
+                log.Printf("Worker %d 设置 QoS 失败: %v", workerID, err)
+                return
+            }
+
+            msgs, err := ch.Consume(
+                q.Name,
+                "",    // consumer tag
+                false, // autoAck
+                false,
+                false,
+                false,
+                nil,
+            )
+            if err != nil {
+                log.Printf("Worker %d 开始消费失败: %v", workerID, err)
+                return
+            }
+
+            log.Printf("Video Worker %d 已启动，等待任务...", workerID)
+
+            for d := range msgs {
+                var task VideoTask
+                if err := json.Unmarshal(d.Body, &task); err != nil {
+                    log.Printf("Worker %d 解析失败: %v", workerID, err)
+                    _ = d.Nack(false, false) // 丢弃（也可改成 true 重新入队）
+                    continue
+                }
+
+                if err := processVideo(task); err != nil {	// 处理视频任务
+                    log.Printf("Worker %d 处理失败: %v", workerID, err)
+                    _ = d.Nack(false, true) // 重新入队
+                    continue
+                }
+
+                _ = d.Ack(false)
+                log.Printf("Worker %d 完成: VideoID=%d", workerID, task.VideoID)
+            }
+
+            log.Printf("Worker %d msgs channel closed, 退出", workerID)
+        }(i)
+    }
+
+    // 关键：阻塞，防止函数返回； 用channel阻塞也可以
+    select {}
+}
+
+
+// startLikeConsumer	============点赞处理的消费者==============
+func startLikeConsumer(conn *amqp.Connection) {
+	log.Println("点赞 Consumer 启动中...")
+
+	workerCount := 2 // 点赞处理相对简单，2个worker足够
+
+	for i := 0; i < workerCount; i++ {
+		go func(workerID int) {
+			ch, err := conn.Channel()
+			if err != nil {
+				log.Printf("Like Worker %d 创建通道失败: %v", workerID, err)
+				return
+			}
+			defer ch.Close()
+
+			// 声明队列（幂等操作）
+			q, err := ch.QueueDeclare(
+				QueueVideoLikeName,
+				true,  // durable: 持久化队列
+				false, // autoDelete: 不自动删除
+				false, // exclusive: 非独占队列
+				false, // noWait: 不等待服务器确认
+				nil,   // arguments: 额外参数
+			)
+			if err != nil {
+				log.Printf("Like Worker %d 声明队列失败: %v", workerID, err)
+				return
+			}
+
+			// 每个 worker 一次只拿一条未确认消息
+			if err := ch.Qos(1, 0, false); err != nil {
+				log.Printf("Like Worker %d 设置 QoS 失败: %v", workerID, err)
+				return
+			}
+
+			msgs, err := ch.Consume(
+				q.Name,
+				"",    // consumer tag
+				false, // autoAck: 手动确认
+				false,
+				false,
+				false,
+				nil,
+			)
+			if err != nil {
+				log.Printf("Like Worker %d 开始消费失败: %v", workerID, err)
+				return
+			}
+
+			log.Printf("Like Worker %d 已启动，等待任务...", workerID)
+
+			for d := range msgs {
+				var task LikeTask
+				if err := json.Unmarshal(d.Body, &task); err != nil {
+					log.Printf("Like Worker %d 解析失败: %v", workerID, err)
+					_ = d.Nack(false, false) // 丢弃无效消息
+					continue
+				}
+
+				if err := processLike(task); err != nil { // 处理点赞任务
+					log.Printf("Like Worker %d 处理失败: %v", workerID, err)
+					_ = d.Nack(false, true) // 重新入队
+					continue
+				}
+
+				_ = d.Ack(false)
+				log.Printf("Like Worker %d 完成: VideoID=%d, Delta=%d", workerID, task.VideoID, task.Delta)
+			}
+
+			log.Printf("Like Worker %d msgs channel closed, 退出", workerID)
+		}(i)
+	}
+
+	// 阻塞，防止函数返回
+	select {}
+}
+
+
+func processLike(task LikeTask) error {
+	log.Printf("开始处理点赞任务: VideoID=%d, UserID=%d, Delta=%d", task.VideoID, task.UserID, task.Delta)
+
+	// 开启事务，确保 videos 表和 likes 表的操作原子性
+	tx := db.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("开启事务失败: %v", tx.Error)
+	}
+	defer func() {	// 防止程序panic意外终止而没有回滚导致数据库状态不一致
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// appliedDelta：本次真正需要应用到 videos.like_count 的变化（只可能 -1/0/+1）
+	appliedDelta := 0
+
+	// 1) 先更新 likes 表（通过查询判断是否需要插入/删除）
+	if task.Delta > 0 {
+		// 点赞：如果不存在记录才插入，存在则幂等不操作
+		exists, err := TxGetByUseridAndVideoid(tx, task.UserID, task.VideoID)
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("查询点赞记录失败: %v", err)
+		}
+
+		// if !exists {
+		// 	like := Like{
+		// 		UserID:  task.UserID,
+		// 		VideoID: task.VideoID,
+		// 	}
+		// 	if err := tx.Create(&like).Error; err != nil {
+		// 		tx.Rollback()
+		// 		return fmt.Errorf("插入点赞记录失败: %v", err)
+		// 	}
+		// 	appliedDelta = 1
+		// }
+		if !exists {
+			res := tx.Exec(
+				"INSERT INTO likes(user_id, video_id, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
+				task.UserID,
+				task.VideoID,
+			)
+
+			if res.Error != nil {
+				tx.Rollback()
+				return fmt.Errorf("插入点赞记录失败: %v", res.Error)
+			}
+
+			if res.RowsAffected > 0 {
+				appliedDelta = 1
+			}
+		}
+
+
+	} else if task.Delta < 0 {
+		// 取消点赞：如果存在记录才删除，不存在则幂等不操作
+		exists, err := TxGetByUseridAndVideoid(tx, task.UserID, task.VideoID)
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("查询点赞记录失败: %v", err)
+		}
+
+		if exists {
+			// res := tx.Where("user_id = ? AND video_id = ?", task.UserID, task.VideoID).Delete(&Like{})
+			res := tx.Exec(
+				"UPDATE likes SET deleted_at = NOW() WHERE user_id = ? AND video_id = ? AND deleted_at IS NULL",
+				task.UserID,
+				task.VideoID,
+			)
+			if res.Error != nil {
+				tx.Rollback()
+				return fmt.Errorf("删除点赞记录失败: %v", res.Error)
+			}
+
+			// - 正常情况下应当 RowsAffected > 0
+			// - 如果 RowsAffected == 0（并发导致刚被删），就当幂等不改计数
+			if res.RowsAffected > 0 {
+				appliedDelta = -1
+			}
+		}
+	}
+
+	// 2) 再更新 videos 表的 like_count（仅当 likes 实际发生变化时）
+	if appliedDelta != 0 {
+		result := tx.Exec(
+			"UPDATE videos SET like_count = GREATEST(CAST(like_count AS SIGNED) + ?, 0) WHERE id = ?",
+			appliedDelta,
+			task.VideoID,
+		)
+		if result.Error != nil {
+			tx.Rollback()
+			return fmt.Errorf("更新 MySQL 失败: %v", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			tx.Rollback()
+			log.Printf("警告: 视频不存在或未更新 VideoID=%d", task.VideoID)
+			return nil
+		}
+	}
+
+	// 提交事务
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("提交事务失败: %v", err)
+	}
+
+	log.Printf("点赞任务处理完成: VideoID=%d, Delta=%d, AppliedDelta=%d", task.VideoID, task.Delta, appliedDelta)
+	return nil
+}
+
+
 
 // initMySQL 初始化 MySQL 连接
 func initMySQL() error {
@@ -454,4 +656,22 @@ func updateVideoURLs(videoID uint, coverURL, url720p, url1080p string) error {
 	}
 
 	return nil
+}
+
+// 保证事务一致性的mysql数据库查询结果
+func TxGetByUseridAndVideoid(dbConn *gorm.DB, userid uint, videoid uint) (bool, error) {
+	var exist int
+
+	err := dbConn.Raw(
+		"SELECT 1 FROM likes WHERE user_id = ? AND video_id = ? AND deleted_at IS NULL LIMIT 1",
+		userid,
+		videoid,
+	).Scan(&exist).Error
+
+	if err != nil {
+		log.Printf("查询点赞记录失败: %v", err)
+		return false, err
+	}
+
+	return exist == 1, nil
 }

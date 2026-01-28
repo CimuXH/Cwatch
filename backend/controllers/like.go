@@ -9,12 +9,12 @@ import (
 // 创建点赞服务实例
 var likeService = services.LikeService{}
 
-// AddLike 点赞视频
+// AddLike 点赞视频（Redis 主 + MQ 异步落库）
 // 请求：POST /api/video/like
 // Header: Authorization: Bearer <token>
 // Body: { "video_id": 1 }
 // 返回：{ "message": "点赞成功", "like_count": 10, "is_liked": true }
-func AddLike(c *gin.Context) {
+func AddLike(c *gin.Context) {	
 	// 1. 获取当前用户（JWT中间件已验证）
 	username, exists := c.Get("username")
 	if !exists {
@@ -45,7 +45,7 @@ func AddLike(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// RemoveLike 取消点赞
+// RemoveLike 取消点赞（Redis 主 + MQ 异步落库）
 // 请求：DELETE /api/video/like
 // Header: Authorization: Bearer <token>
 // Body: { "video_id": 1 }

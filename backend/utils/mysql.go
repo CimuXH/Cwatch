@@ -138,9 +138,8 @@ func GetVideoList(page, pageSize int) ([]VideoListItem, int64, error) {
 	result := make([]VideoListItem, 0, len(videos))
 	for _, v := range videos {
 
-		// 获取点赞数
-		var likeCount int64
-		db.Model(&models.Like{}).Where("video_id = ?", v.ID).Count(&likeCount)
+		// 直接使用 Video 模型中的 LikeCount 字段
+		likeCount := int64(v.LikeCount)
 
 		// 获取评论数
 		var commentCount int64
@@ -192,9 +191,8 @@ func GetUserVideoList(user_id uint, page, pageSize int) ([]VideoListItem, int64,
 	result := make([]VideoListItem, 0, len(videos))
 	for _, v := range videos {
 
-		// 获取点赞数
-		var likeCount int64
-		db.Model(&models.Like{}).Where("video_id = ?", v.ID).Count(&likeCount)
+		// 直接使用 Video 模型中的 LikeCount 字段
+		likeCount := int64(v.LikeCount)
 
 		// 获取评论数
 		var commentCount int64
@@ -268,22 +266,6 @@ func DeleteLike(userID, videoID uint) error {
 }
 
 // GetByUseridAndVideoid 通过userid和videoid查看该信息是否存在
-// func GetByUseridAndVideoid(userid uint, videoid uint) bool {
-	
-// 	var like models.Like
-// 	err := db.Model(&models.Like{}).Where("user_id = ? AND video_id = ?", userid, videoid).First(&like).Error
-// 	if err != nil {
-// 		log.Println(err)
-// 	}
-
-// 	exists := err == nil
-	
-// 	if exists {
-// 		log.Printf("找到的点赞记录 - ID: %d, UserID: %d, VideoID: %d", like.ID, like.UserID, like.VideoID)
-// 	}
-	
-// 	return exists
-// }
 func GetByUseridAndVideoid(userid uint, videoid uint) bool {
     var count int64
     err := db.Model(&models.Like{}).
@@ -298,8 +280,10 @@ func GetByUseridAndVideoid(userid uint, videoid uint) bool {
     return count > 0
 }
 
-// GetVideoLikeCount 获取视频的点赞数
-func GetVideoLikeCount(videoID uint) int64 {	
+
+
+// MGetVideoLikeCount 获取视频的点赞数（M的意思是操作MySQL数据库，其实可以重构utils中的服务操作函数，为每个服务封装一个操作结构体）
+func MGetVideoLikeCount(videoID uint) int64 {	
 	var count int64
 	err := db.Model(&models.Like{}).Where("video_id = ?", videoID).Count(&count).Error
 	
@@ -433,4 +417,63 @@ func DeleteComment(commentid uint) error {
 	}
 	
 	return nil
+}
+
+// GetVideosByIDs 根据视频ID列表批量查询视频（保持顺序）
+// 参数：视频ID列表
+// 返回：视频列表
+func GetVideosByIDs(videoIDs []uint) ([]VideoListItem, error) {
+	if len(videoIDs) == 0 {
+		return []VideoListItem{}, nil
+	}
+
+	var videos []models.Video
+	
+	// 批量查询视频
+	err := db.Where("id IN ? AND status = ?", videoIDs, models.VideoStatusUploaded).
+		Preload("User").
+		Find(&videos).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// 创建ID到视频的映射
+	videoMap := make(map[uint]models.Video)
+	for _, v := range videos {
+		videoMap[v.ID] = v
+	}
+
+	// 按照传入的ID顺序组装结果
+	result := make([]VideoListItem, 0, len(videoIDs))
+	for _, id := range videoIDs {
+		v, exists := videoMap[id]
+		if !exists {
+			continue // 视频不存在或未上传完成，跳过
+		}
+
+		// 直接使用 Video 模型中的 LikeCount 字段
+		likeCount := int64(v.LikeCount)
+
+		// 获取评论数
+		var commentCount int64
+		db.Model(&models.Comment{}).Where("video_id = ?", v.ID).Count(&commentCount)
+
+		result = append(result, VideoListItem{
+			ID:          v.ID,
+			Title:       v.Title,
+			Description: v.Description,
+			URL:         v.URL,
+			URL720p:     v.URL720p,
+			URL1080p:    v.URL1080p,
+			CoverURL:    v.CoverURL,
+			UserID:      v.UserID,
+			Username:    v.User.Username,
+			AvatarURL:   v.User.AvatarURL,
+			CreatedAt:   v.CreatedAt.Format("2006-01-02 15:04"),
+			Likes:       likeCount,
+			Comments:    commentCount,
+		})
+	}
+
+	return result, nil
 }

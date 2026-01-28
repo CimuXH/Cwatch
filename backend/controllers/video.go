@@ -181,3 +181,41 @@ func DeleteUserVideos(c *gin.Context){
 		"deleted_count": len(req.VideoIDs),
 	})
 }
+
+// GetHotVideos 获取热门视频列表（按点赞数排序）
+// 请求：POST /api/videos/hot
+// Header: Authorization: Bearer <token> (可选)
+// Body: { "limit": 20 }
+// 返回：{ "videos": [...] }
+func GetHotVideos(c *gin.Context) {
+	// 绑定请求参数
+	var req struct {
+		Limit int `json:"limit"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		req.Limit = 20 // 默认20个
+	}
+
+	// 限制最大数量
+	if req.Limit <= 0 || req.Limit > 100 {
+		req.Limit = 20
+	}
+
+	// 尝试获取当前用户（可选）
+	username, _ := c.Get("username")
+	usernameStr := ""
+	if username != nil {
+		usernameStr = username.(string)
+	}
+
+	// 调用服务层获取热门视频
+	resp, err := videoService.GetHotVideos(req.Limit, usernameStr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}

@@ -22,6 +22,8 @@ func SetupRoutes(router *gin.Engine) {
 	{
 		// 获取视频列表：未登录可访问，登录后返回 is_liked 字段
 		api.GET("/videos", middlewares.OptionalAuthMiddleware(), controllers.GetVideoList)
+		// 获取热门视频列表：未登录可访问，登录后返回 is_liked 字段
+		api.POST("/videos/hot", middlewares.OptionalAuthMiddleware(), controllers.GetHotVideos)
 	}
 
 	// 需要认证的路由

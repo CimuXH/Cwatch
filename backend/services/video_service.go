@@ -277,3 +277,58 @@ func (s *VideoService) DeleteUserVideos(username string, videoids []uint) error 
 
 	return nil
 }
+
+// GetHotVideos 获取热门视频列表（按点赞数排序）
+// 参数：数量限制、用户名（可选）
+// 返回：视频列表响应
+func (s *VideoService) GetHotVideos(limit int, username string) (*VideoListResponse, error) {
+	// 从 Redis 获取热门视频ID列表（按点赞数降序）
+	videoIDs, err := utils.GetTopLikedVideos(limit)
+	if err != nil {
+		return nil, errors.New("获取热门视频失败")
+	}
+
+	if len(videoIDs) == 0 {
+		// 没有热门视频，返回空列表
+		return &VideoListResponse{
+			Videos:   []utils.VideoListItem{},
+			Total:    0,
+			Page:     1,
+			PageSize: limit,
+		}, nil
+	}
+
+	// 从 MySQL 批量查询视频详情
+	videos, err := utils.GetVideosByIDs(videoIDs)
+	if err != nil {
+		return nil, errors.New("获取视频详情失败")
+	}
+
+	// 如果用户已登录，查询点赞状态
+	if username != "" {
+		user, err := utils.GetUserByUsername(username)
+		if err == nil {
+			// 获取当前用户点赞的所有视频ID
+			likedVideoIDs, err := utils.GetUserLikedVideoIDs(user.ID)
+			if err == nil {
+				// 为每个视频设置 is_liked 字段
+				likedMap := make(map[uint]bool)
+				for _, videoID := range likedVideoIDs {
+					likedMap[videoID] = true
+				}
+
+				// 更新视频列表的 is_liked 字段
+				for i := range videos {
+					videos[i].IsLiked = likedMap[videos[i].ID]
+				}
+			}
+		}
+	}
+
+	return &VideoListResponse{
+		Videos:   videos,
+		Total:    int64(len(videos)),
+		Page:     1,
+		PageSize: limit,
+	}, nil
+}

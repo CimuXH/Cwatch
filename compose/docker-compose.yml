@@ -1,0 +1,102 @@
+
+services:
+
+  mysql:
+    image: mysql:8.0                 # 使用已下载的 mysql 8.0 镜像
+    container_name: mysql            # 指定容器名称
+    restart: unless-stopped           # 容器异常退出时自动重启
+    environment:
+      MYSQL_ROOT_PASSWORD: mysql030303   # root 用户密码
+      MYSQL_DATABASE: cwatch           # 启动时自动创建的数据库
+      TZ: Asia/Shanghai               # 容器时区
+    ports:
+      - "3306:3306"                   # 宿主机3306 -> 容器3306
+    volumes:
+      - mysql_data:/var/lib/mysql     # 持久化 MySQL 数据目录
+    healthcheck:                      # 健康检查（供其他服务判断是否可用）
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s                   # 每 10 秒检查一次
+      timeout: 5s                     # 超时 5 秒
+      retries: 10                     # 连续失败 10 次判定为 unhealthy
+
+  redis:
+    image: redis:8.0                  # 使用 redis 8.0 镜像
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"                   # 映射 redis 端口
+    volumes:
+      - redis_data:/data              # redis 持久化目录
+    command:                          # 启动 redis 时的命令
+      - redis-server
+      - --appendonly
+      - "yes"                         # 开启 AOF 持久化
+      - --requirepass
+      - "redis030303"  
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.11-management   # 带管理界面的 rabbitmq
+    container_name: rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: admin    # rabbitmq 默认用户
+      RABBITMQ_DEFAULT_PASS: rabbitmq030303 # rabbitmq 默认密码
+      TZ: Asia/Shanghai
+    ports:
+      - "5672:5672"                   # AMQP 通信端口
+      - "15672:15672"                 # Web 管理界面端口
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq # rabbitmq 数据持久化
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  nginx:
+    image: nginx:1.28                 # 使用 nginx 1.28 镜像
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"                       # HTTP 对外端口
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro   # nginx 配置目录（只读）
+      - ./nginx/html:/usr/share/nginx/html:ro # 静态资源目录（只读）
+    depends_on:                       # 等依赖服务健康后再启动
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z     # 使用 MinIO 官方最新镜像
+    container_name: minio              # 指定容器名称
+    restart: unless-stopped            # 容器异常退出时自动重启
+    environment:
+      MINIO_ROOT_USER: minioadmin      # 设置 MinIO root 用户
+      MINIO_ROOT_PASSWORD: minio030303 # 设置 MinIO root 密码
+    ports:
+      - "9000:9000"                   # 宿主机 9000 -> 容器 9000（MinIO API端口）
+      - "9001:9001"                   # 宿主机 9001 -> 容器 9001（Web UI端口）
+    volumes:
+      - minio_data:/data              # 持久化 MinIO 数据
+    command: server /data --console-address ":9001"     # 启动 MinIO 服务器并指定数据目录
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+      
+
+volumes:
+  mysql_data:                         # MySQL 数据卷
+  redis_data:                         # Redis 数据卷
+  rabbitmq_data:                      # RabbitMQ 数据卷
+  minio_data:                         # MinIO 数据卷
+

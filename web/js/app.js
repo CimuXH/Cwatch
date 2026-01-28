@@ -377,24 +377,29 @@ async function fetchVideoList(page = 1, append = false) {
         
         const data = await res.json();
         
+        console.log("从服务器获取的视频数据:", data);
+        
         // 转换服务器数据格式为前端格式
-        const serverVideos = (data.videos || []).map(v => ({
-            id: `server_${v.id}`,
-            serverId: v.id,
-            src: v.url,
-            url_720p: v.url_720p,      // 720p视频URL
-            url_1080p: v.url_1080p,    // 1080p视频URL
-            title: v.title || "未命名视频",
-            author: `@${v.username || "用户"}`,
-            likes: v.likes || 0,
-            comments: v.comments || 0,
-            shares: 0,
-            thumbText: "▶",
-            coverUrl: v.cover_url,
-            createdAt: v.created_at || "",  // 创建时间
-            commentItems: [],
-            isLiked: v.is_liked || false, // 使用服务器返回的点赞状态
-        }));
+        const serverVideos = (data.videos || []).map(v => {
+            console.log(`视频 ${v.id} - 标题: ${v.title}, 点赞数: ${v.likes}`);
+            return {
+                id: `server_${v.id}`,
+                serverId: v.id,
+                src: v.url,
+                url_720p: v.url_720p,      // 720p视频URL
+                url_1080p: v.url_1080p,    // 1080p视频URL
+                title: v.title || "未命名视频",
+                author: `@${v.username || "用户"}`,
+                likes: v.likes || 0,
+                comments: v.comments || 0,
+                shares: 0,
+                thumbText: "▶",
+                coverUrl: v.cover_url,
+                createdAt: v.created_at || "",  // 创建时间
+                commentItems: [],
+                isLiked: v.is_liked || false, // 使用服务器返回的点赞状态
+            };
+        });
         
         if (append) {
             // 分页加载：追加到现有列表
@@ -665,6 +670,8 @@ function createFeedItem(videoData, index){
     </div>
   `;
 
+
+
     const cardEl = $(".video-card", item);
     const videoEl = $(".video-media", item);
 
@@ -740,10 +747,15 @@ function createFeedItem(videoData, index){
         }
     }
     
-    // 初始化点赞按钮状态
+    // 初始化点赞按钮状态（确保正确反映服务器返回的状态）
     const likeBtn = item.querySelector('[data-action="like"]');
-    if (likeBtn && videoData.isLiked) {
-        likeBtn.classList.add('video-action--liked');
+    if (likeBtn) {
+        // 根据 videoData.isLiked 设置初始状态
+        if (videoData.isLiked) {
+            likeBtn.classList.add('video-action--liked');
+        } else {
+            likeBtn.classList.remove('video-action--liked');
+        }
     }
     
     // 绑定清晰度菜单项点击事件
@@ -784,6 +796,7 @@ function createFeedItem(videoData, index){
 
     return item;
 }
+
 
 /* =========================
    8) Player Behavior
@@ -831,6 +844,8 @@ function setCurrentByIndex(index){
         const newUrl = `${window.location.pathname}?video_id=${state.currentVideoData.serverId}`;
         history.replaceState({ videoId: state.currentVideoData.serverId, index: index }, '', newUrl);
     }
+
+
 }
 
 function pauseAllVideos(){
@@ -959,8 +974,8 @@ async function likeVideo(videoData) {
         videoData.likes = result.like_count;
         videoData.isLiked = result.is_liked; // 保存点赞状态
         
-        // 更新所有显示该视频点赞数和状态的地方
-        updateVideoLikeCount(videoData.id, result.like_count, result.is_liked);
+        // 更新所有显示该视频点赞数和状态的地方（使用数字 ID）
+        updateVideoLikeCount(videoId, result.like_count, result.is_liked);
         
         // 显示提示
         toast(result.message);
@@ -975,8 +990,12 @@ async function likeVideo(videoData) {
 
 // 更新视频点赞数显示
 function updateVideoLikeCount(videoId, likeCount, isLiked) {
+    // videoId 是数字 ID（serverId）
+    
     // 更新播放页面的点赞数和按钮状态
-    const feedItem = $(`.feed-item[data-video-id="${videoId}"]`);
+    // feed-item 使用的是字符串 ID，需要转换
+    const stringVideoId = `server_${videoId}`;
+    const feedItem = $(`.feed-item[data-video-id="${stringVideoId}"]`);
     if (feedItem) {
         const countEl = $('[data-count="likes"]', feedItem);
         if (countEl) countEl.textContent = formatCount(likeCount);
@@ -995,41 +1014,66 @@ function updateVideoLikeCount(videoId, likeCount, isLiked) {
     // 更新预览页面的点赞数
     const previewCards = $all('.preview-card');
     previewCards.forEach(card => {
-        const index = parseInt(card.dataset.index);
-        if (DATA.videos[index] && DATA.videos[index].id === videoId) {
+        // 使用 serverId 进行比较（数字 ID）
+        const cardVideoId = parseInt(card.dataset.videoId);
+        if (cardVideoId === videoId) {
             const authorEl = $('.preview-card__author', card);
             if (authorEl) {
                 const authorText = authorEl.textContent;
                 const newText = authorText.replace(/\d+(\.\d+)?[KM]?\s*赞/, `${formatCount(likeCount)} 赞`);
                 authorEl.textContent = newText;
             }
+            
+            // 同时更新 DATA.videos 中的数据
+            const index = parseInt(card.dataset.index);
+            if (DATA.videos[index]) {
+                DATA.videos[index].likes = likeCount;
+                DATA.videos[index].isLiked = isLiked;
+            }
         }
     });
 }
 
-// 点赞动画效果
-function likeWithAnimation(feedItemEl, videoData){
+// 点赞动画效果（只在用户主动点击时调用）
+function likeWithAnimation(feedItemEl, videoData, showAnimation = true){
     console.log("点击点赞按钮 - videoData:", videoData);
+    
+    // 从点赞按钮的实际状态获取当前点赞状态（而不是从 videoData）
+    const likeBtn = feedItemEl.querySelector('[data-action="like"]');
+    const wasLiked = likeBtn ? likeBtn.classList.contains('video-action--liked') : (videoData.isLiked || false);
     
     // 调用后端API进行点赞
     likeVideo(videoData).then(result => {
-        if (result) {
-            // 根据点赞状态播放不同的动画
-            if (result.is_liked) {
-                // 点赞：显示完整爱心弹出动画
+        if (result && showAnimation) {
+            // 只有 showAnimation 为 true 时才播放动画
+            // 根据点赞状态变化播放对应的动画
+            if (result.is_liked && !wasLiked) {
+                // 从未点赞变为已点赞：显示完整爱心弹出动画
                 const likeBurst = $(".video-like-burst", feedItemEl);
                 if (likeBurst){
+                    // 先移除之前的动画状态，确保动画可以重新触发
                     likeBurst.classList.remove("is-show");
                     void likeBurst.offsetWidth; // 强制重绘
                     likeBurst.classList.add("is-show");
+                    
+                    // 动画结束后自动移除 is-show 类，避免下次打开时重复播放
+                    setTimeout(() => {
+                        likeBurst.classList.remove("is-show");
+                    }, 800); // 动画持续时间约800ms
                 }
-            } else {
-                // 取消点赞：显示破碎爱心动画
+            } else if (!result.is_liked && wasLiked) {
+                // 从已点赞变为未点赞：显示破碎爱心动画
                 const unlikeBurst = $(".video-unlike-burst", feedItemEl);
                 if (unlikeBurst){
+                    // 先移除之前的动画状态，确保动画可以重新触发
                     unlikeBurst.classList.remove("is-show");
                     void unlikeBurst.offsetWidth; // 强制重绘
                     unlikeBurst.classList.add("is-show");
+                    
+                    // 动画结束后自动移除 is-show 类，避免下次打开时重复播放
+                    setTimeout(() => {
+                        unlikeBurst.classList.remove("is-show");
+                    }, 800); // 动画持续时间约800ms
                 }
             }
         }
@@ -1583,7 +1627,7 @@ el.copyBtn.addEventListener("click", () => copyText(el.shareLink.value));
 // 设置导航按钮激活状态
 function setNavActive(activeEl) {
     // 移除所有按钮的激活状态
-    [el.navExplore, el.navUpload, el.navFav, el.navSetting].forEach(btn => {
+    [el.navExplore, el.navUpload, el.navFav, el.navHot, el.navSetting].forEach(btn => {
         if (btn) btn.classList.remove('sidebar__item--active');
     });
     // 添加当前按钮的激活状态
@@ -1699,6 +1743,86 @@ function bindGlobalEvents(){
             toast("获取视频列表失败");
         }
     });
+    
+    // 新增：热门视频按钮点击事件
+    el.navHot = document.getElementById("navHot");
+    if (el.navHot) {
+        el.navHot.addEventListener("click", async () => {
+            try {
+                // 获取热门视频列表
+                const token = localStorage.getItem("cwatchToken");
+                const headers = {
+                    "Content-Type": "application/json"
+                };
+                
+                // 如果已登录，添加认证头
+                if (token) {
+                    headers["Authorization"] = `Bearer ${token}`;
+                }
+                
+                const res = await fetch("http://localhost:5000/api/videos/hot", {
+                    method: "POST",
+                    headers: headers,
+                    body: JSON.stringify({ limit: 50 })
+                });
+                
+                if (!res.ok) {
+                    throw new Error("获取热门视频失败");
+                }
+                
+                const data = await res.json();
+                
+                // 转换服务器数据格式为前端格式
+                const hotVideos = (data.videos || []).map(v => ({
+                    id: `server_${v.id}`,
+                    serverId: v.id,
+                    src: v.url,
+                    url_720p: v.url_720p,
+                    url_1080p: v.url_1080p,
+                    title: v.title || "未命名视频",
+                    author: `@${v.username || "用户"}`,
+                    likes: v.likes || 0,
+                    comments: v.comments || 0,
+                    shares: 0,
+                    thumbText: "▶",
+                    coverUrl: v.cover_url,
+                    createdAt: v.created_at || "",
+                    commentItems: [],
+                    isLiked: v.is_liked || false,
+                }));
+                
+                // 更新全局数据源
+                DATA.videos = hotVideos;
+                
+                // 重新渲染预览网格
+                renderPreviewGrid(DATA.videos, false);
+                
+                // 显示预览页
+                showPage("preview");
+                setNavActive(el.navHot);
+                
+                // 更新页面标题
+                const pageTitle = document.querySelector('.page__title');
+                const pageSubtitle = document.querySelector('.page__subtitle');
+                if (pageTitle) pageTitle.textContent = "🔥 热门视频";
+                if (pageSubtitle) pageSubtitle.textContent = `按点赞数排序 · 共 ${hotVideos.length} 个视频`;
+                
+                // 隐藏管理按钮（如果存在）
+                const pageActions = document.getElementById("pageActions");
+                if (pageActions) {
+                    pageActions.style.display = "none";
+                }
+                
+                if (hotVideos.length === 0) {
+                    toast("暂无热门视频");
+                }
+            } catch (err) {
+                console.error("获取热门视频失败:", err);
+                toast("获取热门视频失败");
+            }
+        });
+    }
+
     
     el.navSetting.addEventListener("click", () => {
         toast("设置入口（占位）");
