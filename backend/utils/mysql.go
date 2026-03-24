@@ -165,6 +165,56 @@ func GetVideoList(page, pageSize int) ([]VideoListItem, int64, error) {
 	return result, total, nil
 }
 
+// GetVideoListPage 获取视频列表（分页），不计算 total
+// 用于随机 feed 等“可能多次翻页”的场景，减少 COUNT 开销。
+func GetVideoListPage(page, pageSize int) ([]VideoListItem, error) {
+	var videos []models.Video
+
+	// 只查询已上传完成的视频
+	query := db.Model(&models.Video{}).Where("status = ?", models.VideoStatusUploaded)
+
+	// 分页查询，按创建时间倒序
+	offset := (page - 1) * pageSize
+	if err := query.Preload("User").Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&videos).Error; err != nil {
+		return nil, err
+	}
+
+	// 组装返回数据
+	result := make([]VideoListItem, 0, len(videos))
+	for _, v := range videos {
+		likeCount := int64(v.LikeCount)
+
+		// 获取评论数
+		var commentCount int64
+		db.Model(&models.Comment{}).Where("video_id = ?", v.ID).Count(&commentCount)
+
+		result = append(result, VideoListItem{
+			ID:          v.ID,
+			Title:       v.Title,
+			Description: v.Description,
+			URL:         v.URL,
+			URL720p:     v.URL720p,
+			URL1080p:    v.URL1080p,
+			CoverURL:    v.CoverURL,
+			UserID:      v.UserID,
+			Username:    v.User.Username,
+			AvatarURL:   v.User.AvatarURL,
+			CreatedAt:   v.CreatedAt.Format("2006-01-02 15:04"),
+			Likes:       likeCount,
+			Comments:    commentCount,
+		})
+	}
+
+	return result, nil
+}
+
+// GetUploadedVideoCount 获取已上传完成的视频总数
+func GetUploadedVideoCount() (int64, error) {
+	var total int64
+	err := db.Model(&models.Video{}).Where("status = ?", models.VideoStatusUploaded).Count(&total).Error
+	return total, err
+}
+
 
 // GetUserVideoList 获取 某个用户 的视频列表（分页）
 // page: 页码（从1开始）

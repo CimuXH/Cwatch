@@ -33,6 +33,7 @@ const el = {
     navExplore: document.getElementById("navExplore"),
     navUpload: document.getElementById("navUpload"),
     navFav: document.getElementById("navFav"),
+    navRandomFeed: document.getElementById("navRandomFeed"),
     navSetting: document.getElementById("navSetting"),
     // sheets
     sheetMask: document.getElementById("sheetMask"),
@@ -111,6 +112,15 @@ const state = {
     // 新增：管理模式状态
     isManageMode: false, // 是否处于管理模式
     selectedVideoIds: [], // 选中的视频ID列表
+
+    // =========================
+    // Random Feed 状态（随机起点 + 滚到底加载）
+    // =========================
+    randomFeedLoading: false,
+    randomFeedHasMore: true,
+    randomFeedNextPage: 1,
+    randomFeedPageSize: 5,
+    randomFeedLoadMoreObserver: null
 };
 
 /* =========================
@@ -311,6 +321,9 @@ function showPage(page){
     // 进入预览页：确保暂停所有视频
     if (isPreview) {
         pauseAllVideos();
+        // 预览页和播放器页的数据源可能不同，进入预览页时清空 feed，避免下一次打开播放器时误复用旧列表
+        el.feed.innerHTML = "";
+        el.feed.dataset.rendered = "";
         // 清除 URL 参数
         history.pushState({}, '', window.location.pathname);
     }
@@ -582,6 +595,159 @@ function renderFeed(videos){
     el.feed.appendChild(frag);
 }
 
+// 将后端返回的视频结构映射为当前前端使用的结构
+function mapServerVideoToFront(v) {
+    return {
+        id: `server_${v.id}`,
+        serverId: v.id,
+        src: v.url,
+        url_720p: v.url_720p,
+        url_1080p: v.url_1080p,
+        title: v.title || "未命名视频",
+        author: `@${v.username || "用户"}`,
+        likes: v.likes || 0,
+        comments: v.comments || 0,
+        shares: 0,
+        thumbText: "▶",
+        coverUrl: v.cover_url,
+        createdAt: v.created_at || "",
+        commentItems: [],
+        isLiked: v.is_liked || false,
+    };
+}
+
+function appendFeedItemsAtStart(videos, startIndex) {
+    const frag = document.createDocumentFragment();
+    videos.forEach((v, idx) => {
+        frag.appendChild(createFeedItem(v, startIndex + idx));
+    });
+    el.feed.appendChild(frag);
+}
+
+function observeRandomFeedLoadMore() {
+    // 断开旧的 observer，确保只监听当前最后一条
+    if (state.randomFeedLoadMoreObserver) {
+        state.randomFeedLoadMoreObserver.disconnect();
+        state.randomFeedLoadMoreObserver = null;
+    }
+
+    const items = $all(".feed-item", el.feed);
+    const last = items[items.length - 1];
+    if (!last) return;
+
+    state.randomFeedLoadMoreObserver = new IntersectionObserver((entries) => {
+        const entry = entries[0];
+        if (!entry || !entry.isIntersecting) return;
+        if (state.randomFeedLoading) return;
+        if (!state.randomFeedHasMore) return;
+
+        loadRandomFeedBatch(false).then(() => {
+            observeRandomFeedLoadMore();
+        });
+    }, { root: el.feed, threshold: [0.65] });
+
+    state.randomFeedLoadMoreObserver.observe(last);
+}
+
+async function loadRandomFeedBatch(init) {
+    if (state.randomFeedLoading) return;
+
+    const token = localStorage.getItem("cwatchToken");
+    if (!token) {
+        toast("请先登录");
+        showAuthPage();
+        return;
+    }
+
+    state.randomFeedLoading = true;
+    try {
+        const body = init ? { init: true } : { init: false, page: state.randomFeedNextPage };
+
+        const res = await fetch("http://localhost:5000/api/random-feed/next", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+            },
+            body: JSON.stringify(body)
+        });
+
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || "加载随机 Feed 失败");
+        }
+
+        const data = await res.json();
+        const serverVideos = (data.videos || []).map(mapServerVideoToFront);
+
+        console.log("[RandomFeed] response", {
+            init: !!init,
+            videos: serverVideos.length,
+            next_page: data.next_page,
+            has_more: data.has_more,
+            first_id: serverVideos[0] ? serverVideos[0].serverId : null,
+        });
+
+        if (init && serverVideos.length === 0) {
+            toast("随机 Feed 暂无可用视频（可能是已看过过多）");
+        }
+
+        state.randomFeedNextPage = data.next_page || 1;
+        state.randomFeedHasMore = !!data.has_more;
+
+        if (init) {
+            DATA.videos = serverVideos;
+            renderFeed(DATA.videos);
+            el.feed.dataset.rendered = "1";
+        } else {
+            const oldLen = DATA.videos.length;
+            appendFeedItemsAtStart(serverVideos, oldLen);
+            DATA.videos = [...DATA.videos, ...serverVideos];
+            initPlayerAutoPlayObserver();
+        }
+    } catch (err) {
+        console.error("加载随机 Feed 失败:", err);
+        toast(err.message || "加载随机 Feed 失败");
+        state.randomFeedHasMore = false;
+    } finally {
+        state.randomFeedLoading = false;
+    }
+}
+
+async function startRandomFeedModule() {
+    // 重置 feed 与随机 feed 状态
+    state.randomFeedLoading = false;
+    state.randomFeedHasMore = true;
+    state.randomFeedNextPage = 1;
+    state.randomFeedPageSize = 3;
+
+    state.currentIndex = -1;
+    state.currentVideoEl = null;
+    state.currentVideoData = null;
+    pauseAllVideos();
+
+    el.feed.innerHTML = "";
+    el.feed.dataset.rendered = "";
+    DATA.videos = [];
+
+    showPage("player");
+    setNavActive(el.navRandomFeed);
+
+    await loadRandomFeedBatch(true);
+    initPlayerAutoPlayObserver();
+
+    if (DATA.videos.length > 0) {
+        const items = $all(".feed-item", el.feed);
+        const startIndex = Math.floor(Math.random() * items.length);
+        const target = items[startIndex];
+        if (target) target.scrollIntoView({ behavior: "auto", block: "start" });
+        setCurrentByIndex(startIndex);
+        setTimeout(() => autoPlayCurrentVideo(), 100);
+    }
+
+    observeRandomFeedLoadMore();
+}
+
 // 创建单个视频播放项（包含视频、信息、按钮、进度条等）
 function createFeedItem(videoData, index){
     const item = document.createElement("article");
@@ -803,6 +969,9 @@ function createFeedItem(videoData, index){
 ========================= */
 function initPlayerAutoPlayObserver(){
     // 只负责更新“当前项”，不负责自动播放（满足：进入首页不直接播放）
+    if (state.io) {
+        state.io.disconnect();
+    }
     state.io = new IntersectionObserver((entries) => {
         const visible = entries
             .filter(en => en.isIntersecting)
@@ -1627,7 +1796,7 @@ el.copyBtn.addEventListener("click", () => copyText(el.shareLink.value));
 // 设置导航按钮激活状态
 function setNavActive(activeEl) {
     // 移除所有按钮的激活状态
-    [el.navExplore, el.navUpload, el.navFav, el.navHot, el.navSetting].forEach(btn => {
+    [el.navExplore, el.navUpload, el.navFav, el.navHot, el.navRandomFeed, el.navSetting].forEach(btn => {
         if (btn) btn.classList.remove('sidebar__item--active');
     });
     // 添加当前按钮的激活状态
@@ -1742,6 +1911,23 @@ function bindGlobalEvents(){
             console.error("获取用户视频列表失败:", err);
             toast("获取视频列表失败");
         }
+    });
+
+    // 新增：随机 Feed 按钮点击事件（需要登录）
+    el.navRandomFeed?.addEventListener("click", async () => {
+        if (!state.isLoggedIn) {
+            toast("请先登录");
+            showAuthPage();
+            return;
+        }
+
+        await startRandomFeedModule();
+
+        // 更新页面标题
+        const pageTitle = document.querySelector('.page__title');
+        const pageSubtitle = document.querySelector('.page__subtitle');
+        if (pageTitle) pageTitle.textContent = "🎲 随机 Feed";
+        if (pageSubtitle) pageSubtitle.textContent = "随机起点 + 无重复滑动播放";
     });
     
     // 新增：热门视频按钮点击事件

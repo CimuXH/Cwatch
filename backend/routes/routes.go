@@ -34,6 +34,9 @@ func SetupRoutes(router *gin.Engine) {
 		protected.GET("/user/info", controllers.GetUserInfo) // 获取用户信息
 		protected.POST("/logout", controllers.Logout)        // 登出
 
+		// 随机 Feed（需要登录，用布隆过滤器去重）
+		protected.POST("/random-feed/next", controllers.RandomFeedNext)
+
 		// 视频相关路由
 		protected.POST("/video/upload-url", controllers.GetUploadURL)      // 获取上传URL
 		protected.POST("/video/upload-complete", controllers.ConfirmUpload) // 确认上传完成
