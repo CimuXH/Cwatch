@@ -16,7 +16,7 @@ var commentService = services.CommentService{}
 // Header: Authorization: Bearer <token>
 // Body: {"content": "评论内容"}
 func AddComment(c *gin.Context) {
-	// 1. 获取当前用户（JWT已经验证过了）
+	// 1. 获取当前用户（令牌已经验证过了）
 	username, exists := c.Get("username")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -45,7 +45,7 @@ func AddComment(c *gin.Context) {
 	}
 
 	// 4. 调用服务层添加评论（videoID 作为独立参数传入）
-	response, err := commentService.AddComment(username.(string), uint(videoID), req)
+	response, err := commentService.AddComment(c.Request.Context(), username.(string), uint(videoID), req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -62,8 +62,8 @@ func AddComment(c *gin.Context) {
 
 // GetComments 获取视频评论
 // 请求：GET /video/:videoid/comments
-// 不需要JWT验证
-func GetComments(c *gin.Context){
+// 不需要令牌验证
+func GetComments(c *gin.Context) {
 	// 从路径参数获取视频ID
 	videoidStr := c.Param("videoid")
 	videoid, err := strconv.ParseUint(videoidStr, 10, 32)
@@ -74,9 +74,8 @@ func GetComments(c *gin.Context){
 		return
 	}
 
-
 	// 获取评论
-	comments, err := commentService.GetComments(uint(videoid))
+	comments, err := commentService.GetComments(c.Request.Context(), uint(videoid))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -86,8 +85,8 @@ func GetComments(c *gin.Context){
 
 	// 返回响应
 	c.JSON(http.StatusOK, gin.H{
-		"message":	"获取评论成功",
-		"comments":	comments,
+		"message":  "获取评论成功",
+		"comments": comments,
 	})
 }
 
@@ -95,7 +94,7 @@ func GetComments(c *gin.Context){
 // 请求：DELETE /api/video/comment/:commentid
 // Header: Authorization: Bearer <token>
 func DeleteComment(c *gin.Context) {
-	// 1. 获取当前用户（JWT已经验证过了）
+	// 1. 获取当前用户（令牌已经验证过了）
 	username, exists := c.Get("username")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -115,7 +114,7 @@ func DeleteComment(c *gin.Context) {
 	}
 
 	// 3. 调用服务层删除评论
-	err = commentService.DeleteComment(username.(string), uint(commentID))
+	err = commentService.DeleteComment(c.Request.Context(), username.(string), uint(commentID))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),

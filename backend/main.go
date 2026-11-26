@@ -1,66 +1,83 @@
 package main
 
 import (
-	"backend/models"
+	"context"
+	"errors"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"time"
+
+	"backend/config"
+	"backend/processing"
 	"backend/routes"
 	"backend/utils"
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"log"
 )
 
 func main() {
-	// 初始化 MySQL 连接
 	if err := utils.InitMySQL(); err != nil {
-		log.Fatal("MySQL 连接失败:", err)
+		log.Fatal("MySQL 连接失败，请检查 CWATCH_DSN: ", err)
 	}
-
-	// 自动迁移数据库表结构
-	// 会根据模型自动创建或更新表
-	err := utils.AutoMigrate(
-		&models.User{},
-		&models.Video{},
-		&models.Comment{},
-		&models.Like{},
-	)
+	if err := utils.Migrate(); err != nil {
+		log.Fatal("模型迁移失败: ", err)
+	}
+	if err := utils.InitMedia(); err != nil {
+		log.Fatal("视频目录初始化失败: ", err)
+	}
+	closeCache, err := utils.InitRedisVideoCache()
 	if err != nil {
-		log.Fatal("模型迁移失败:", err)
+		log.Fatal(err)
 	}
-	log.Println("模型迁移完成")
+	defer closeCache()
 
-	// 初始化 Redis 连接
-	if err := utils.InitRedis(); err != nil {
-		log.Fatal("Redis 连接失败:", err)
-	}
-
-	// 初始化 MinIO 连接
-	if err := utils.InitMinIO(); err != nil {
-		log.Fatal("MinIO 连接失败：", err)
+	workers, err := strconv.Atoi(config.Value("CWATCH_WORKERS", "1"))
+	if err != nil || workers < 0 || workers > 8 {
+		log.Fatal("CWATCH_WORKERS 必须是 0 到 8 之间的整数")
 	}
 
-	// 初始化 RabbitMQ 连接
-	if err := utils.InitRabbitMQ(); err != nil {
-		log.Fatal("RabbitMQ 连接失败：", err)
-	}
-	// 程序退出时关闭 RabbitMQ 连接
-	defer utils.CloseRabbitMQ()
-
-	// 创建Gin路由引擎
 	router := gin.Default()
-
-	// 配置CORS跨域中间件
-	// 允许前端从不同域名访问后端API
-	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"}, // 允许所有来源（生产环境应指定具体域名）
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-	}))
-
-	// 设置路由
+	router.SetTrustedProxies(nil)
 	routes.SetupRoutes(router)
+	webDir := config.Value("CWATCH_WEB_DIR", "../web")
+	router.Static("/css", filepath.Join(webDir, "css"))
+	router.Static("/js", filepath.Join(webDir, "js"))
+	router.StaticFile("/", filepath.Join(webDir, "index.html"))
 
-	router.Run(":5000")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	rankingDone := make(chan struct{})
+	go func() {
+		defer close(rankingDone)
+		utils.RunHotVideoRanking(ctx)
+	}()
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		processing.Run(ctx, workers)
+	}()
 
+	addr := config.Value("CWATCH_ADDR", "127.0.0.1:5000")
+	server := &http.Server{Addr: addr, Handler: router, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: time.Minute}
+	serverErr := make(chan error, 1)
+	go func() { serverErr <- server.ListenAndServe() }()
+	log.Printf("Cwatch 监听 %s", addr)
+	select {
+	case err := <-serverErr:
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("HTTP 服务停止: %v", err)
+		}
+		stop()
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			_ = server.Close()
+		}
+	}
+	<-workerDone
+	<-rankingDone
 }

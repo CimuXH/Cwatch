@@ -1,112 +1,43 @@
 package middlewares
 
 import (
-	"backend/utils"
-	"github.com/gin-gonic/gin"
+	"errors"
 	"net/http"
 	"strings"
+
+	"backend/utils"
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
-// AuthMiddleware JWT认证中间件
-// 用于保护需要登录才能访问的API
 func AuthMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// 从请求头获取Authorization字段
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "缺少认证令牌",
-			})
-			c.Abort() // 终止请求处理
-			return
-		}
-
-		// 检查Bearer前缀
-		// 标准格式：Authorization: Bearer <token>
-		parts := strings.SplitN(authHeader, " ", 2)  // 把字符串分割成两部分
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "认证令牌格式错误",
-			})
-			c.Abort()
-			return
-		}
-
-		// 提取令牌
-		token := parts[1]
-
-		// 检查 token 是否在黑名单中
-		if utils.IsBlacklisted(token) {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "令牌已失效，请重新登录",
-			})
-			c.Abort()
-			return
-		}
-
-		// 验证JWT令牌
-		claims, err := utils.ValidateJWT(token)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "无效的认证令牌",
-			})
-			c.Abort()
-			return
-		}
-
-		// 将用户名和 token 存入上下文，供后续处理函数使用
-		c.Set("username", claims.Username)
-		c.Set("token", token)
-
-		// 继续处理请求
-		c.Next()
-	}
+	return authenticate(true)
 }
 
-// OptionalAuthMiddleware 可选的JWT认证中间件
-// 如果提供了有效的token，则设置用户信息；否则继续处理请求
-// 用于那些登录和未登录都可以访问，但登录后有额外功能的API
 func OptionalAuthMiddleware() gin.HandlerFunc {
+	return authenticate(false)
+}
+
+func authenticate(required bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 从请求头获取Authorization字段
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			// 没有token，继续处理请求（作为未登录用户）
-			c.Next()
+		scheme, token, _ := strings.Cut(c.GetHeader("Authorization"), " ")
+		if strings.EqualFold(scheme, "Bearer") && len(token) == 64 {
+			username, err := utils.SessionUsername(c.Request.Context(), token)
+			if err == nil {
+				c.Set("username", username)
+				c.Set("token", token)
+				c.Next()
+				return
+			}
+			if required && !errors.Is(err, gorm.ErrRecordNotFound) {
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "认证服务暂时不可用"})
+				return
+			}
+		}
+		if required {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "无效的认证令牌，请重新登录"})
 			return
 		}
-
-		// 检查Bearer前缀
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			// token格式错误，继续处理请求（作为未登录用户）
-			c.Next()
-			return
-		}
-
-		// 提取令牌
-		token := parts[1]
-
-		// 检查 token 是否在黑名单中
-		if utils.IsBlacklisted(token) {
-			// token已失效，继续处理请求（作为未登录用户）
-			c.Next()
-			return
-		}
-
-		// 验证JWT令牌
-		claims, err := utils.ValidateJWT(token)
-		if err != nil {
-			// token无效，继续处理请求（作为未登录用户）
-			c.Next()
-			return
-		}
-
-		// token有效，将用户名存入上下文
-		c.Set("username", claims.Username)
-		c.Set("token", token)
-
-		// 继续处理请求
 		c.Next()
 	}
 }

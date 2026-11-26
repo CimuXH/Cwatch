@@ -1,102 +1,144 @@
+name: cwatch
 
 services:
-
   mysql:
-    image: mysql:8.0                 # 使用已下载的 mysql 8.0 镜像
-    container_name: mysql            # 指定容器名称
-    restart: unless-stopped           # 容器异常退出时自动重启
+    image: ${CWATCH_IMAGE_PREFIX:-}mysql:8.0
+    restart: unless-stopped
+    command:
+      - --innodb-buffer-pool-size=128M
+      - --max-connections=48
+      - --performance-schema=OFF
+      - --mysqlx=OFF
     environment:
-      MYSQL_ROOT_PASSWORD: mysql030303   # root 用户密码
-      MYSQL_DATABASE: cwatch           # 启动时自动创建的数据库
-      TZ: Asia/Shanghai               # 容器时区
-    ports:
-      - "3306:3306"                   # 宿主机3306 -> 容器3306
+      MYSQL_DATABASE: cwatch
+      MYSQL_USER: cwatch
+      MYSQL_PASSWORD: ${CWATCH_MYSQL_PASSWORD:?Set CWATCH_MYSQL_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${CWATCH_MYSQL_ROOT_PASSWORD:?Set CWATCH_MYSQL_ROOT_PASSWORD in .env}
     volumes:
-      - mysql_data:/var/lib/mysql     # 持久化 MySQL 数据目录
-    healthcheck:                      # 健康检查（供其他服务判断是否可用）
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
-      interval: 10s                   # 每 10 秒检查一次
-      timeout: 5s                     # 超时 5 秒
-      retries: 10                     # 连续失败 10 次判定为 unhealthy
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
 
   redis:
-    image: redis:8.0                  # 使用 redis 8.0 镜像
-    container_name: redis
+    image: ${CWATCH_IMAGE_PREFIX:-}redis:8-alpine
     restart: unless-stopped
-    ports:
-      - "6379:6379"                   # 映射 redis 端口
-    volumes:
-      - redis_data:/data              # redis 持久化目录
-    command:                          # 启动 redis 时的命令
-      - redis-server
-      - --appendonly
-      - "yes"                         # 开启 AOF 持久化
-      - --requirepass
-      - "redis030303"  
+    user: redis
+    environment:
+      REDIS_PASSWORD: ${CWATCH_REDIS_PASSWORD:?Set CWATCH_REDIS_PASSWORD in .env}
+    command:
+      - sh
+      - -ec
+      - |
+        umask 077
+        printf 'requirepass %s\n' "$$REDIS_PASSWORD" > /tmp/cwatch-redis.conf
+        exec redis-server /tmp/cwatch-redis.conf --save "" --appendonly no --maxmemory 96mb --maxmemory-policy allkeys-lfu
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -qx PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
   rabbitmq:
-    image: rabbitmq:3.11-management   # 带管理界面的 rabbitmq
-    container_name: rabbitmq
+    image: ${CWATCH_IMAGE_PREFIX:-}rabbitmq:4.2-alpine
+    hostname: rabbitmq
     restart: unless-stopped
     environment:
-      RABBITMQ_DEFAULT_USER: admin    # rabbitmq 默认用户
-      RABBITMQ_DEFAULT_PASS: rabbitmq030303 # rabbitmq 默认密码
-      TZ: Asia/Shanghai
-    ports:
-      - "5672:5672"                   # AMQP 通信端口
-      - "15672:15672"                 # Web 管理界面端口
+      RABBITMQ_DEFAULT_USER: cwatch
+      RABBITMQ_DEFAULT_PASS: ${CWATCH_RABBITMQ_PASSWORD:?Set CWATCH_RABBITMQ_PASSWORD in .env}
+      RABBITMQ_DEFAULT_VHOST: cwatch
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "+S 2:2"
+      RABBITMQ_CTL_ERL_ARGS: "+S 1:1"
     volumes:
-      - rabbitmq_data:/var/lib/rabbitmq # rabbitmq 数据持久化
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./rabbitmq.conf:/etc/rabbitmq/conf.d/20-cwatch.conf:ro
     healthcheck:
-      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 18
 
-  nginx:
-    image: nginx:1.28                 # 使用 nginx 1.28 镜像
-    container_name: nginx
+  minio:
+    image: cwatch/minio:2025-10-15
+    build:
+      context: ..
+      dockerfile: compose/Dockerfile.minio
+      args:
+        IMAGE_PREFIX: ${CWATCH_IMAGE_PREFIX:-}
+        GOPROXY: ${CWATCH_GOPROXY:-https://proxy.golang.org}
     restart: unless-stopped
-    ports:
-      - "80:80"                       # HTTP 对外端口
+    environment:
+      MINIO_ROOT_USER: cwatch-minio-admin
+      MINIO_ROOT_PASSWORD: ${CWATCH_MINIO_ROOT_PASSWORD:?Set CWATCH_MINIO_ROOT_PASSWORD in .env}
+      MINIO_BROWSER: "off"
+      MINIO_REGION_NAME: us-east-1
+      HOME: /tmp
+      GOMAXPROCS: "2"
+      GOMEMLIMIT: 350MiB
+    command: ["server", "/data", "--address", ":9000"]
     volumes:
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro   # nginx 配置目录（只读）
-      - ./nginx/html:/usr/share/nginx/html:ro # 静态资源目录（只读）
-    depends_on:                       # 等依赖服务健康后再启动
+      - minio_data:/data
+
+  minio-init:
+    image: cwatch/minio:2025-10-15
+    entrypoint: ["/usr/local/bin/cwatch-minio-init"]
+    command: []
+    environment:
+      MINIO_ROOT_USER: cwatch-minio-admin
+      MINIO_ROOT_PASSWORD: ${CWATCH_MINIO_ROOT_PASSWORD:?Set CWATCH_MINIO_ROOT_PASSWORD in .env}
+      CWATCH_MINIO_ACCESS_KEY: cwatch-app
+      CWATCH_MINIO_SECRET_KEY: ${CWATCH_MINIO_APP_PASSWORD:?Set CWATCH_MINIO_APP_PASSWORD in .env}
+    depends_on:
+      minio:
+        condition: service_started
+
+  app:
+    image: cwatch/app:local
+    build:
+      context: ..
+      dockerfile: compose/Dockerfile
+      args:
+        IMAGE_PREFIX: ${CWATCH_IMAGE_PREFIX:-}
+        GOPROXY: ${CWATCH_GOPROXY:-https://proxy.golang.org}
+        APT_MIRROR: ${CWATCH_APT_MIRROR:-}
+    restart: unless-stopped
+    stop_signal: SIGINT
+    ports:
+      - "${CWATCH_HTTP_BIND:-0.0.0.0}:${CWATCH_HTTP_PORT:-8080}:5000"
+    environment:
+      GIN_MODE: release
+      GOMAXPROCS: "2"
+      GOMEMLIMIT: 200MiB
+      CWATCH_DSN: "cwatch:${CWATCH_MYSQL_PASSWORD:?Set CWATCH_MYSQL_PASSWORD in .env}@tcp(mysql:3306)/cwatch?parseTime=true&charset=utf8mb4&loc=UTC"
+      CWATCH_REDIS_URL: "redis://:${CWATCH_REDIS_PASSWORD:?Set CWATCH_REDIS_PASSWORD in .env}@redis:6379/0"
+      CWATCH_RABBITMQ_URL: "amqp://cwatch:${CWATCH_RABBITMQ_PASSWORD:?Set CWATCH_RABBITMQ_PASSWORD in .env}@rabbitmq:5672/cwatch"
+      CWATCH_MINIO_ENDPOINT: http://minio:9000
+      CWATCH_MINIO_ACCESS_KEY: cwatch-app
+      CWATCH_MINIO_SECRET_KEY: ${CWATCH_MINIO_APP_PASSWORD:?Set CWATCH_MINIO_APP_PASSWORD in .env}
+      CWATCH_MINIO_BUCKET: cwatch
+      CWATCH_MINIO_REGION: us-east-1
+      CWATCH_MEDIA_DIR: /var/lib/cwatch/media
+      CWATCH_WEB_DIR: /opt/cwatch/web
+      CWATCH_ADDR: "0.0.0.0:5000"
+      CWATCH_WORKERS: "1"
+    depends_on:
       mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
-
-  minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z     # 使用 MinIO 官方最新镜像
-    container_name: minio              # 指定容器名称
-    restart: unless-stopped            # 容器异常退出时自动重启
-    environment:
-      MINIO_ROOT_USER: minioadmin      # 设置 MinIO root 用户
-      MINIO_ROOT_PASSWORD: minio030303 # 设置 MinIO root 密码
-    ports:
-      - "9000:9000"                   # 宿主机 9000 -> 容器 9000（MinIO API端口）
-      - "9001:9001"                   # 宿主机 9001 -> 容器 9001（Web UI端口）
-    volumes:
-      - minio_data:/data              # 持久化 MinIO 数据
-    command: server /data --console-address ":9001"     # 启动 MinIO 服务器并指定数据目录
+      rabbitmq:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5000/api/videos"]
       interval: 10s
       timeout: 5s
-      retries: 10
-
-      
+      retries: 12
 
 volumes:
-  mysql_data:                         # MySQL 数据卷
-  redis_data:                         # Redis 数据卷
-  rabbitmq_data:                      # RabbitMQ 数据卷
-  minio_data:                         # MinIO 数据卷
-
+  mysql_data:
+  rabbitmq_data:
+  minio_data:
