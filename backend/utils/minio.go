@@ -1,136 +1,215 @@
 package utils
 
 import (
-	"backend/config"
 	"context"
+	"errors"
 	"fmt"
-	"log"
-
+	"net/url"
+	"os"
+	"path/filepath"
 	"time"
 
+	"backend/config"
+	"backend/models"
+	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"gorm.io/gorm"
 )
 
-var mc *minio.Client
+var ErrMediaUnavailable = errors.New("MinIO 暂时不可用")
 
-// MinIO 配置
-const (
-	MinioBucket       = "cwatch"             // 存储桶名称
-	UploadURLExpiry   = 15 * time.Minute     // 上传URL有效期
-	DownloadURLExpiry = 24 * time.Hour       // 下载URL有效期
-)
+type minioStorage struct {
+	client *minio.Client
+	bucket string
+}
 
-// InitMinIO 初始化MinIO
-func InitMinIO() error {
-	// 构建 MinIO 服务地址
-	minioEndpoint := fmt.Sprintf("%s:%s", config.MinIOHost, config.MinIOPort)
-	
-	// 创建 MinIO 客户端实例
-	client, err := minio.New(minioEndpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(config.MinIOAccessKey, config.MinIOSecretKey, ""),
-		Secure: false,
+var objectStorage *minioStorage
+
+func initMinIO() error {
+	endpoint := config.Value("CWATCH_MINIO_ENDPOINT", "")
+	if endpoint == "" {
+		objectStorage = nil
+		return nil
+	}
+	address, err := url.Parse(endpoint)
+	if err != nil || address.Host == "" || address.User != nil || address.RawQuery != "" ||
+		address.Fragment != "" || (address.Path != "" && address.Path != "/") ||
+		(address.Scheme != "http" && address.Scheme != "https") {
+		return errors.New("CWATCH_MINIO_ENDPOINT 必须是带 http:// 或 https:// 的 MinIO API 地址")
+	}
+	accessKey := config.Value("CWATCH_MINIO_ACCESS_KEY", "")
+	secretKey := config.Value("CWATCH_MINIO_SECRET_KEY", "")
+	if accessKey == "" || secretKey == "" {
+		return errors.New("请配置 CWATCH_MINIO_ACCESS_KEY 和 CWATCH_MINIO_SECRET_KEY")
+	}
+	secure := address.Scheme == "https"
+	transport, err := minio.DefaultTransport(secure)
+	if err != nil {
+		return err
+	}
+	transport.ResponseHeaderTimeout = 15 * time.Second
+	client, err := minio.New(address.Host, &minio.Options{
+		Creds: credentials.NewStaticV4(accessKey, secretKey, ""), Secure: secure,
+		Transport: transport, Region: config.Value("CWATCH_MINIO_REGION", ""),
+		MaxRetries: 2, BucketLookup: minio.BucketLookupPath,
 	})
 	if err != nil {
 		return err
 	}
-
-	mc = client
-
-	// 验证连接：检查存储桶是否存在，不存在则创建
-	ctx := context.Background()
-	exists, err := mc.BucketExists(ctx, MinioBucket)
-	if err != nil {
-		return err
-	}
-
-	if !exists {
-		// 创建存储桶
-		err = mc.MakeBucket(ctx, MinioBucket, minio.MakeBucketOptions{})
-		if err != nil {
-			return err
-		}
-		log.Printf("MinIO 存储桶 '%s' 创建成功", MinioBucket)
-	}
-
-	// 设置存储桶策略为公开读取（允许匿名下载）
-	policy := fmt.Sprintf(`{
-		"Version": "2012-10-17",
-		"Statement": [
-			{
-				"Effect": "Allow",
-				"Principal": {"AWS": ["*"]},
-				"Action": ["s3:GetObject"],
-				"Resource": ["arn:aws:s3:::%s/*"]
-			}
-		]
-	}`, MinioBucket)
-
-	err = mc.SetBucketPolicy(ctx, MinioBucket, policy)
-	if err != nil {
-		log.Printf("设置存储桶公开策略失败: %v", err)
-		// 不返回错误，因为这不是致命错误
-	} else {
-		log.Printf("存储桶 '%s' 已设置为公开读取", MinioBucket)
-	}
-
-	log.Println("MinIO 连接成功")
+	objectStorage = &minioStorage{client: client, bucket: config.Value("CWATCH_MINIO_BUCKET", "cwatch")}
 	return nil
 }
 
-// GenerateUploadURL 生成预签名上传URL
-// 参数：文件名（应该是UUID生成的唯一文件名）
-// 返回：预签名URL和错误
-func GenerateUploadURL(filename string) (string, error) {
-	ctx := context.Background()
+func DefaultVideoStorage() string {
+	if objectStorage != nil {
+		return models.StorageMinIO
+	}
+	return ""
+}
 
-	// 生成预签名PUT URL
-	presignedURL, err := mc.PresignedPutObject(ctx, MinioBucket, filename, UploadURLExpiry)
-	if err != nil {
-		return "", err
+func videoObjectPrefix(video *models.Video) string {
+	return fmt.Sprintf("videos/%d/%s/", video.ID, video.FileName)
+}
+
+func storeMinIOUpload(ctx context.Context, video *models.Video, file string) error {
+	if objectStorage == nil {
+		return ErrMediaUnavailable
+	}
+	if video.SourceObject != "" {
+		return nil
 	}
 
-	return presignedURL.String(), nil
-}
+	object := videoObjectPrefix(video) + "source/" + uuid.NewString()
+	uploadCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	if err := objectStorage.upload(uploadCtx, object, file, "application/octet-stream"); err != nil {
+		objectStorage.discard(object)
+		return err
+	}
 
-// GenerateDownloadURL 生成永久下载URL
-// 参数：文件名
-// 返回：永久URL和错误
-func GenerateDownloadURL(filename string) (string, error) {
-	// 方案1：生成永久的公开URL（推荐用于视频播放）
-	// 格式：http://minio-server:port/bucket-name/filename
-	minioEndpoint := fmt.Sprintf("%s:%s", config.MinIOHost, config.MinIOPort)
-	permanentURL := fmt.Sprintf("http://%s/%s/%s", minioEndpoint, MinioBucket, filename)
-	return permanentURL, nil
-	
-	// 方案2：如果需要预签名URL，可以设置更长的过期时间
-	// ctx := context.Background()
-	// reqParams := make(url.Values)
-	// reqParams.Set("response-content-disposition", "inline")
-	// presignedURL, err := mc.PresignedGetObject(ctx, MinioBucket, filename, 365*24*time.Hour, reqParams) // 1年有效期
-	// if err != nil {
-	//     return "", err
-	// }
-	// return presignedURL.String(), nil
-}
-
-// CheckFileExists 检查文件是否存在于MinIO中
-// 参数：文件名
-// 返回：是否存在和错误
-func CheckFileExists(filename string) (bool, error) {
-	ctx := context.Background()
-
-	// 获取文件信息，如果文件不存在会返回错误
-	_, err := mc.StatObject(ctx, MinioBucket, filename, minio.StatObjectOptions{})
-	if err != nil {
-		// 检查是否是"文件不存在"的错误
-		errResponse := minio.ToErrorResponse(err)
-		if errResponse.Code == "NoSuchKey" {
-			return false, nil // 文件不存在，但不是错误
+	var retained bool
+	err := transaction(ctx, func(tx *gorm.DB) error {
+		retained = false
+		current, err := lockVideo(tx, video.ID, "UPDATE")
+		if errors.Is(err, gorm.ErrRecordNotFound) || err == nil && !sameUpload(current, video) {
+			return ErrVideoUnavailable
 		}
-		return false, err // 其他错误
+		if err != nil {
+			return err
+		}
+		if current.SourceObject != "" {
+			return nil
+		}
+		if err := tx.Model(&current).Update("source_object", object).Error; err != nil {
+			return err
+		}
+		retained = true
+		return nil
+	})
+	// An ambiguous commit may have saved the reference. Only discard the
+	// upload when the database has definitively rejected or superseded it.
+	if err == nil && !retained || errors.Is(err, ErrVideoUnavailable) {
+		objectStorage.discard(object)
 	}
-
-	return true, nil // 文件存在
+	return err
 }
 
+func (storage *minioStorage) upload(ctx context.Context, object, file, contentType string) error {
+	_, err := storage.client.FPutObject(ctx, storage.bucket, object, file, minio.PutObjectOptions{ContentType: contentType})
+	return objectError(err)
+}
+
+func (storage *minioStorage) discard(object string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = storage.client.RemoveObject(ctx, storage.bucket, object, minio.RemoveObjectOptions{})
+}
+
+func (storage *minioStorage) deletePrefix(ctx context.Context, prefix string) error {
+	listCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	for object := range storage.client.ListObjects(listCtx, storage.bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
+		if object.Err != nil {
+			return objectError(object.Err)
+		}
+		if err := storage.client.RemoveObject(ctx, storage.bucket, object.Key, minio.RemoveObjectOptions{}); err != nil {
+			return objectError(err)
+		}
+	}
+	return ctx.Err()
+}
+
+func sourceSize(ctx context.Context, video *models.Video) (int64, error) {
+	if video.Storage == models.StorageMinIO {
+		if objectStorage == nil {
+			return 0, ErrMediaUnavailable
+		}
+		if video.SourceObject == "" {
+			return 0, os.ErrNotExist
+		}
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		info, err := objectStorage.client.StatObject(ctx, objectStorage.bucket, video.SourceObject, minio.StatObjectOptions{})
+		return info.Size, objectError(err)
+	}
+	path, err := MediaPath(video.ID, video.FileName)
+	if err != nil {
+		return 0, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return 0, os.ErrNotExist
+	}
+	return info.Size(), nil
+}
+
+func objectError(err error) error {
+	if err == nil {
+		return nil
+	}
+	switch minio.ToErrorResponse(err).Code {
+	case "NoSuchKey", "NoSuchObject", "NotFound":
+		return os.ErrNotExist
+	default:
+		return fmt.Errorf("%w: %v", ErrMediaUnavailable, err)
+	}
+}
+
+func getMinIOObject(ctx context.Context, video *models.Video, name string) (*minio.Object, time.Time, error) {
+	if objectStorage == nil {
+		return nil, time.Time{}, ErrMediaUnavailable
+	}
+	key := videoObjectPrefix(video) + name
+	if name == video.FileName {
+		key = video.SourceObject
+	}
+	if key == "" {
+		return nil, time.Time{}, os.ErrNotExist
+	}
+	object, err := objectStorage.client.GetObject(ctx, objectStorage.bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, time.Time{}, objectError(err)
+	}
+	info, err := object.Stat()
+	if err != nil {
+		_ = object.Close()
+		return nil, time.Time{}, objectError(err)
+	}
+	return object, info.LastModified, nil
+}
+
+func downloadMinIOSource(ctx context.Context, video *models.Video, dir string) (string, error) {
+	if objectStorage == nil {
+		return "", ErrMediaUnavailable
+	}
+	if video.SourceObject == "" {
+		return "", os.ErrNotExist
+	}
+	input := filepath.Join(dir, "source"+filepath.Ext(video.FileName))
+	err := objectStorage.client.FGetObject(ctx, objectStorage.bucket, video.SourceObject, input, minio.GetObjectOptions{})
+	return input, objectError(err)
+}

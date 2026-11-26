@@ -1,251 +1,78 @@
-# 畅看项目 (Cwatch)
+# 畅看 Cwatch
 
-**注**：本项目用于自己学习和实践 Go + Gin 框架以及相关中间件技术。
+基于 Go、Gin 和原生 JavaScript 的短视频项目。支持注册登录、视频上传播放、点赞、评论、热门排行和随机浏览。
 
-> 一个基于 Go + Gin 的短视频分享平台
+## Docker Compose 部署
 
-## 📖 项目简介
+从项目根目录复制 `compose/.env.example` 为 `compose/.env`，为每个密码字段填入独立生成的十六进制密码。Linux 上可用 `openssl rand -hex 24` 生成。将 `.env` 权限设置为仅部署用户可读，然后启动：
 
-本项目是一个全栈短视频分享平台，支持视频上传、播放、点赞、评论、热门视频排行等核心功能。使用消息队列和缓存技术解决高并发场景下的性能问题。
-
-## ✨ 核心功能
-
-### 用户功能
-- ✅ 用户注册/登录
-- ✅ 用户信息管理
-- ✅ 个人视频管理
-
-### 视频功能
-- ✅ 视频上传
-- ✅ 视频播放
-- ✅ 视频列表浏览
-- ✅ 热门视频排行
-- ✅ 自动生成视频封面
-
-### 互动功能
-- ✅ 点赞/取消点赞
-- ✅ 评论/删除评论
-- ✅ 视频分享
-
-### 播放器功能
-- ✅ 视频进度条拖动
-- ✅ 播放/暂停控制
-- ✅ 音量控制（
-- ✅ 清晰度切换
-- ✅ 双击点赞动画
-
-### 首页展示
-![alt text](image.png)
-
-## 🛠️ 技术栈
-
-### 后端技术
-- **Go 1.24.9** - 主要开发语言
-- **Gin** - Web框架，构建RESTful API
-- **GORM** - ORM框架，数据库操作
-- **MySQL 8.0** - 关系型数据库，存储用户、视频、评论、点赞数据
-- **Redis 8.0** - 缓存中间件，存储热点数据（点赞数、热门视频排行）
-- **RabbitMQ 3.11** - 消息队列，异步处理点赞、视频处理任务
-- **MinIO** - 对象存储服务，存储视频文件和封面图
-- **JWT** - 用户认证和授权
-- **Bcrypt** - 密码加密
-- **FFmpeg 8.0.1** - 视频处理（生成封面、转码多清晰度）
-
-### 前端技术
-- **原生 JavaScript (Vanilla JS)** - 无框架开发
-- **HTML5 + CSS3** - 页面结构和样式
-- **HTML5 Video API** - 视频播放控制
-- **Fetch API** - 前后端数据交互
-
-### 基础设施
-- **Docker + Docker Compose** - 容器化部署
-- **Nginx 1.28** - 反向代理和静态资源服务
-
-## 🏗️ 架构设计
-
-### 系统架构
-```
-┌─────────────┐      ┌─────────────┐      ┌─────────────┐
-│   前端页面   │ ───> │  Backend API │ ───> │   MySQL     │
-│  (Web/JS)   │      │   (Gin)     │      │  (数据库)    │
-└─────────────┘      └─────────────┘      └─────────────┘
-                            │                      │
-                            ├──────────────────────┤
-                            │                      │
-                     ┌──────▼──────┐        ┌─────▼──────┐
-                     │   Redis     │        │  RabbitMQ  │
-                     │  (缓存)     │        │ (消息队列)  │
-                     └─────────────┘        └─────┬──────┘
-                                                   │
-                     ┌─────────────┐        ┌─────▼──────┐
-                     │   MinIO     │ <───── │   Worker   │
-                     │ (对象存储)   │        │  (消费者)   │
-                     └─────────────┘        └────────────┘
+```sh
+docker compose --env-file compose/.env -f compose/docker-compose.yml build app minio
+docker compose --env-file compose/.env -f compose/docker-compose.yml up -d --no-build
+docker compose --env-file compose/.env -f compose/docker-compose.yml ps
 ```
 
-### 分层架构
-- **Controller层** - 处理HTTP请求，参数验证
-- **Service层** - 业务逻辑处理
-- **Model层** - 数据模型定义
-- **Utils层** - 工具函数（数据库、缓存、存储、消息队列）
+Cwatch 使用独立的 Compose 项目、网络和命名数据卷。Docker 将宿主机的 `CWATCH_HTTP_PORT` 直接映射到应用容器的 `5000` 端口。默认访问地址为 `http://服务器IP:8080/`。MySQL、Redis、RabbitMQ 和 MinIO 在项目网络内通信。MySQL、RabbitMQ 和 MinIO 数据保存在各自的数据卷中，Redis 缓存可以重建。部署多个项目时可分别设置项目名和宿主机 HTTP 端口。服务器需要镜像或包下载代理时，可配置 `CWATCH_IMAGE_PREFIX`、`CWATCH_GOPROXY` 和 `CWATCH_APT_MIRROR`。
 
-## 🎯 技术亮点
+## 本地启动
 
-### 1. 高并发点赞优化
-**问题**：大量用户同时点赞会导致数据库压力过大
+需要 Go 1.24.9 和一个可访问的 MySQL 8.0 数据库。FFmpeg 用于生成封面和转码。配置相应连接后，项目使用 Redis 共享缓存、RabbitMQ 投递异步任务和 MinIO 存储视频。开发环境可以留空这些连接，直接查询 MySQL、轮询任务表并使用本地媒体目录。
 
-**解决方案**：
-- Redis缓存点赞数，快速响应用户请求（毫秒级）
-- RabbitMQ异步队列，批量更新MySQL
-- 使用原子操作（INCR/DECR）防止并发冲突
-- 最终一致性模型，保证数据准确性
+1. 在已有 MySQL 实例中创建 `cwatch` 数据库，并准备有该库读写及建表权限的账号。
+2. 在 PowerShell 中从项目根目录启动后端。把示例 DSN 的账号、密码和端口替换成实际值。
 
-### 2. 视频存储与分发
-**问题**：大文件存储和高并发访问
-
-**解决方案**：
-- MinIO对象存储，支持分布式扩展
-- 预签名URL，安全上传下载
-- 多清晰度转码（720p/1080p），适配不同网络环境
-
-### 3. 异步视频处理
-**问题**：视频上传后需要生成封面、转码，耗时长
-
-**解决方案**：
-- RabbitMQ异步任务队列
-- Worker独立服务处理视频任务
-- 用户上传后立即返回，后台异步处理
-- FFmpeg高效视频处理
-
-### 4. 数据一致性保证
-**问题**：Redis缓存与MySQL数据不一致
-
-**解决方案**：
-- 最终一致性模型
-- Worker定期同步Redis数据到MySQL
-- 事务保证videos表和likes表操作原子性
-- 失败重试机制
-
-## 🔧 环境要求
-
-- **Go 1.24.9** (Windows开发环境)
-- **FFmpeg 8.0.1** (Windows开发环境)
-- **Docker + Docker Compose** (服务器部署)
-  - MySQL 8.0
-  - Redis 8.0
-  - RabbitMQ 3.11-management
-  - Nginx 1.28
-  - MinIO RELEASE.2025-09-07T16-13-09Z
-
-
-
-
-## 📁 项目结构
-
-```bash
-/backend              # 后端服务
-  /config            # 配置文件（数据库、Redis、MinIO等）
-  /controllers       # 控制层（处理HTTP请求）
-  /routes            # 路由定义
-  /models            # 数据模型（User、Video、Comment、Like）
-  /services          # 业务逻辑层
-  /middlewares       # 中间件（JWT认证）
-  /utils             # 工具函数（MySQL、Redis、MinIO、RabbitMQ）
-  main.go            # 主程序入口
-
-/web                 # 前端页面
-  /js                # JavaScript文件
-  /css               # 样式文件
-  index.html         # 主页面
-
-/worker              # 消费者服务（异步任务处理）
-  /config            # 配置文件
-  main.go            # 消费者主程序（处理视频封面生成、转码等）
-
-/compose             # Docker Compose配置文件
-  docker-compose.yml  # 配置文件
-
-README.md            # 项目说明文档
+```powershell
+$env:GOPROXY = 'off'
+$env:GOSUMDB = 'off'
+$env:GOTOOLCHAIN = 'local'
+$env:CWATCH_DSN = 'cwatch:你的密码@tcp(127.0.0.1:3306)/cwatch?parseTime=true&charset=utf8mb4&loc=UTC'
+Set-Location backend
+go run .
 ```
 
-## 🚀 快速开始
+3. 打开 [http://127.0.0.1:5000](http://127.0.0.1:5000)。后端会提供页面、API 和已确认的视频文件，并启动一个转码 Worker。服务会自动迁移表结构。
 
-### 1. 环境准备
+| 环境变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `CWATCH_DSN` | `root@tcp(127.0.0.1:3306)/cwatch?parseTime=true&charset=utf8mb4&loc=UTC` | MySQL 连接 |
+| `CWATCH_REDIS_URL` | 空 | Redis 连接，如 `redis://主机:6379/0` 或 `rediss://主机:6380/0`，支持 ACL 用户名和密码 |
+| `CWATCH_RABBITMQ_URL` | 空 | AMQP 地址，支持 `amqp://` 和 `amqps://`，使用分配给项目的用户和 vhost |
+| `CWATCH_RABBITMQ_QUEUE` | `cwatch.video-tasks.v1` | 视频转码和清理的持久队列 |
+| `CWATCH_MINIO_ENDPOINT` | 空 | 带 `http://` 或 `https://` 的 MinIO API 地址 |
+| `CWATCH_MINIO_ACCESS_KEY`、`CWATCH_MINIO_SECRET_KEY` | 空 | MinIO 凭据。配置 MinIO 地址时需要设置 |
+| `CWATCH_MINIO_BUCKET` | `cwatch` | 已创建的 MinIO 存储桶，需允许读、写、列举和删除对象 |
+| `CWATCH_MINIO_REGION` | 空 | 对象存储区域。留空时由 SDK 查询 |
+| `CWATCH_MEDIA_DIR` | `../data/media` | 本地媒体及上传和转码暂存目录，相对于运行目录 |
+| `CWATCH_WEB_DIR` | `../web` | 前端文件目录，相对于运行目录 |
+| `CWATCH_ADDR` | `127.0.0.1:5000` | API 和前端的监听地址 |
+| `CWATCH_FFMPEG` | `ffmpeg` | PATH 中的命令或 FFmpeg 的完整路径 |
+| `CWATCH_WORKERS` | `1` | 进程内 Worker 数，API 允许设为 `0` |
 
-#### 服务器端（Docker部署）
-```bash
-# 使用 Docker Compose 部署基础服务
-docker-compose up -d
+需要单独运行 Worker 时，将后端的 `CWATCH_WORKERS` 设为 `0`，从 `worker` 目录执行 `go run .`。先启动 API 完成迁移。两个进程使用同一数据库和中间件配置。本地存储模式还要求共享同一个媒体目录。
 
-# 包含以下服务：
-# - MySQL 8.0
-# - Redis 8.0
-# - RabbitMQ 3.11-management
-# - MinIO
-# - Nginx 1.28
-```
+上面的命令使用本机 Go 工具链和已有的模块缓存进行离线构建。
 
-#### 开发环境（Windows）
-- 安装 Go 1.24.9
-- 安装 FFmpeg 8.0.1
+## 数据和任务
 
-### 2. 配置文件
+- MySQL 保存用户、会话、视频、点赞、评论和任务。用户重新登录即可获取新的会话令牌。点赞关系和计数在一个短事务里更新，数据库用联合唯一约束保证同一个用户与视频只有一条点赞关系。
+- 浏览器拿到上传地址后携带 Bearer 令牌上传原文件。API 将文件写入该视频创建时选定的存储位置。配置 MinIO 后，新视频的原文件、封面和转码产物存入 MinIO，浏览器仍经 API 播放并支持 Range 请求。启用 MinIO 前上传的视频继续从原来的本地目录读取。
+- 确认上传时，在更新视频状态的同一个事务里创建转码任务。RabbitMQ 发布器从任务表读取待投递任务，发送固定任务 ID，收到发布确认且消息已路由后记录投递时间。连接中断时，任务留在 MySQL 等待恢复。确认后未被领取的任务也会重新投递。
+- Worker 按任务 ID 用 MySQL 行锁领取任务，并在租约内续期。重复投递由任务状态和租约控制，旧执行令牌无法发布产物。任务完成或重试状态已落库后，Worker 才确认消息。临时失败最多执行四次，已失败的转码可由视频作者调用 `POST /api/video/retry-processing`，请求体为 `{"video_id": 1}`。删除视频会取消转码并登记存储清理任务。
+- 首页和热门榜优先读 Redis，未命中时查询 MySQL 并回填。视频确认、转码完成和删除后使共享缓存失效。Redis 超时或缺少连接配置时，直接查询 MySQL。同一进程内并发到达的相同回源请求合并为一次查询，热点回源有并发上限。榜单和计数可有数秒延迟，当前用户的点赞状态从数据库批量查询。随机 Feed 在每次进入时随机选起始页，按页加载。
+- 迁移旧库时先备份数据。首次添加点赞唯一约束会合并重复关系、保留一条记录并重算视频计数。数据库备份和媒体目录需要一起保存，旧对象存储的历史视频需要从原文件备份另行恢复。
 
-修改 `backend/config/config.go` 和 `worker/config/config.go`，配置数据库、Redis、MinIO、RabbitMQ连接信息。
+## 常用接口
 
-### 3. 启动服务
+| 方法和路径 | 用途 |
+| --- | --- |
+| `POST /api/register`、`POST /api/login`、`POST /api/logout` | 注册、登录和登出 |
+| `GET /api/videos`、`POST /api/videos/hot` | 视频列表和热门榜 |
+| `POST /api/random-feed/next` | 随机浏览 |
+| `POST /api/video/upload-url` → `PUT /api/video/upload/:videoid` → `POST /api/video/upload-complete` | 申请上传、上传文件、确认 |
+| `POST /api/video/like`、`DELETE /api/video/like` | 点赞和取消点赞 |
+| `GET /api/video/:videoid/comments`、`POST /api/video/comment/:videoid`、`DELETE /api/video/comment/:commentid` | 评论列表、发表和删除 |
+| `GET /api/user/:userid/videos`、`POST /api/videos/delete` | 个人视频和批量删除 |
 
-#### 启动后端API服务
-```bash
-cd backend
-go run main.go
-```
+## 测试
 
-#### 启动Worker消费者服务
-```bash
-cd worker
-go run main.go
-```
-
-
-## 📊 数据库设计
-
-### 核心表结构
-
-#### users 表（用户表）
-- id, username, password, avatar_url, created_at, updated_at
-
-#### videos 表（视频表）
-- id, title, url, url_720p, url_1080p, cover_url, user_id, like_count, status, created_at, updated_at
-
-#### likes 表（点赞表）
-- id, user_id, video_id, created_at
-
-#### comments 表（评论表）
-- id, user_id, video_id, content, created_at, updated_at
-
-## 🔐 API接口
-
-### 用户相关
-- `POST /api/register` - 用户注册
-- `POST /api/login` - 用户登录
-- `GET /api/user/:id` - 获取用户信息
-
-### 视频相关
-- `GET /api/videos` - 获取视频列表（支持分页）
-- `POST /api/videos/hot` - 获取热门视频
-- `GET /api/user/:id/videos` - 获取用户视频列表
-- `POST /api/video/upload-url` - 获取上传凭证
-- `POST /api/video/confirm-upload` - 确认上传完成
-- `DELETE /api/video/delete` - 删除视频
-
-### 互动相关
-- `POST /api/video/toggle-like` - 切换点赞状态
-- `GET /api/video/:id/comments` - 获取评论列表
-- `POST /api/video/comment/:id` - 发表评论
-- `DELETE /api/video/comment/:id` - 删除评论
-
----
-
-
-
+在 `backend` 和 `worker` 目录分别执行 `go test ./...`。后端并发集成测试使用 `CWATCH_TEST_DSN` 指定独立的空 MySQL 测试数据库。测试会创建表、测试用户和任务。

@@ -2,9 +2,11 @@ package controllers
 
 import (
 	"backend/services"
+	"backend/utils"
+	"errors"
+	"github.com/gin-gonic/gin"
 	"net/http"
 	"strconv"
-	"github.com/gin-gonic/gin"
 )
 
 // 创建视频服务实例
@@ -27,7 +29,7 @@ func GetVideoList(c *gin.Context) {
 	}
 
 	// 调用服务层获取视频列表
-	resp, err := videoService.GetVideoList(page, pageSize, usernameStr)
+	resp, err := videoService.GetVideoList(c.Request.Context(), page, pageSize, usernameStr)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
@@ -44,7 +46,7 @@ func GetVideoList(c *gin.Context) {
 // Body: { "filename": "test.mp4", "filesize": 102400, "title": "我的视频" }
 // 返回：{ "upload_url": "...", "video_id": 1 }
 func GetUploadURL(c *gin.Context) {
-	// 从上下文获取用户名（JWT中间件已验证）
+	// 从上下文获取用户名（认证中间件已验证）
 	username, exists := c.Get("username")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -99,8 +101,12 @@ func ConfirmUpload(c *gin.Context) {
 	}
 
 	// 调用服务层确认上传
-	resp, err := videoService.ConfirmUpload(username.(string), req)
+	resp, err := videoService.ConfirmUpload(c.Request.Context(), username.(string), req)
 	if err != nil {
+		if errors.Is(err, utils.ErrMediaUnavailable) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": utils.ErrMediaUnavailable.Error()})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 		})
@@ -130,7 +136,7 @@ func GetUserVideoList(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "12"))
 
 	// 调用服务层获取用户视频列表
-	resp, err := videoService.GetUserVideoList(page, pageSize, uint(userID))
+	resp, err := videoService.GetUserVideoList(c.Request.Context(), page, pageSize, uint(userID))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
@@ -146,7 +152,7 @@ func GetUserVideoList(c *gin.Context) {
 // Header: Authorization: Bearer <token>
 // Body: { "video_ids": [1, 2, 3] }
 // 返回：{ "success": true, "deleted_count": 3 }
-func DeleteUserVideos(c *gin.Context){
+func DeleteUserVideos(c *gin.Context) {
 	// 从上下文获取用户名
 	username, exists := c.Get("username")
 	if !exists {
@@ -158,7 +164,7 @@ func DeleteUserVideos(c *gin.Context){
 
 	// 绑定请求参数
 	var req struct {
-		VideoIDs []uint `json:"video_ids" binding:"required"`
+		VideoIDs []uint `json:"video_ids" binding:"required,min=1,max=100"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -168,7 +174,7 @@ func DeleteUserVideos(c *gin.Context){
 	}
 
 	// 调用服务层删除视频
-	err := videoService.DeleteUserVideos(username.(string), req.VideoIDs)
+	deleted, err := videoService.DeleteUserVideos(c.Request.Context(), username.(string), req.VideoIDs)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -177,8 +183,8 @@ func DeleteUserVideos(c *gin.Context){
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"deleted_count": len(req.VideoIDs),
+		"success":       true,
+		"deleted_count": deleted,
 	})
 }
 
@@ -209,7 +215,7 @@ func GetHotVideos(c *gin.Context) {
 	}
 
 	// 调用服务层获取热门视频
-	resp, err := videoService.GetHotVideos(req.Limit, usernameStr)
+	resp, err := videoService.GetHotVideos(c.Request.Context(), req.Limit, usernameStr)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),

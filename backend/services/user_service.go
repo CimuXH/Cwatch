@@ -28,7 +28,7 @@ type UserResponse struct {
 	ID        uint   `json:"id"`              // 用户ID
 	Username  string `json:"username"`        // 用户名
 	AvatarURL string `json:"avatar_url"`      // 头像URL
-	Token     string `json:"token,omitempty"` // JWT令牌（仅登录时返回）
+	Token     string `json:"token,omitempty"` // 会话令牌（仅登录时返回）
 }
 
 // Register 注册新用户
@@ -46,11 +46,6 @@ func (s *UserService) Register(req RegisterRequest) (*UserResponse, error) {
 		return nil, errors.New("密码长度至少6个字符")
 	}
 
-	// 检查用户名是否已存在
-	if utils.UserExists(username) {
-		return nil, errors.New("用户名已存在")
-	}
-
 	// 加密密码
 	hashedPassword, err := utils.HashPassword(req.Password)
 	if err != nil {
@@ -65,6 +60,9 @@ func (s *UserService) Register(req RegisterRequest) (*UserResponse, error) {
 
 	// 保存到数据库
 	if err := utils.CreateUser(user); err != nil {
+		if utils.IsDuplicate(err) {
+			return nil, errors.New("用户名已存在")
+		}
 		return nil, errors.New("用户创建失败")
 	}
 
@@ -78,7 +76,7 @@ func (s *UserService) Register(req RegisterRequest) (*UserResponse, error) {
 
 // Login 用户登录
 // 参数：登录请求
-// 返回：用户信息（包含JWT令牌）和错误
+// 返回：用户信息（包含会话令牌）和错误
 func (s *UserService) Login(req LoginRequest) (*UserResponse, error) {
 	// 验证输入
 	username := strings.TrimSpace(req.Username)
@@ -97,8 +95,8 @@ func (s *UserService) Login(req LoginRequest) (*UserResponse, error) {
 		return nil, errors.New("密码错误")
 	}
 
-	// 生成JWT令牌
-	token, err := utils.GenerateJWT(user.Username)
+	// 生成会话令牌
+	token, err := utils.CreateSession(user.ID)
 	if err != nil {
 		return nil, errors.New("令牌生成失败")
 	}

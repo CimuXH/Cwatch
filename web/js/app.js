@@ -380,7 +380,7 @@ async function fetchVideoList(page = 1, append = false) {
             headers["Authorization"] = `Bearer ${token}`;
         }
         
-        const res = await fetch(`http://localhost:5000/api/videos?page=${page}&page_size=${state.videoPageSize}`, {
+        const res = await fetch(`/api/videos?page=${page}&page_size=${state.videoPageSize}`, {
             headers: headers
         });
         
@@ -663,7 +663,7 @@ async function loadRandomFeedBatch(init) {
     try {
         const body = init ? { init: true } : { init: false, page: state.randomFeedNextPage };
 
-        const res = await fetch("http://localhost:5000/api/random-feed/next", {
+        const res = await fetch("/api/random-feed/next", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -1117,14 +1117,15 @@ async function likeVideo(videoData) {
     console.log("准备点赞 - videoId:", videoId, "videoData:", videoData);
 
     try {
-        const res = await fetch("http://localhost:5000/api/video/toggle-like", {
+        const res = await fetch("/api/video/toggle-like", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
                 "Authorization": `Bearer ${token}`
             },
             body: JSON.stringify({
-                video_id: videoId
+                video_id: videoId,
+                liked: !videoData.isLiked
             })
         });
 
@@ -1547,7 +1548,7 @@ async function fetchComments(videoData) {
     }
     
     try {
-        const res = await fetch(`http://localhost:5000/api/video/${videoId}/comments`);
+        const res = await fetch(`/api/video/${videoId}/comments`);
         
         if (!res.ok) {
             throw new Error("获取评论失败");
@@ -1656,7 +1657,7 @@ el.commentSend.addEventListener("click", async () => {
     }
     
     try {
-        const res = await fetch(`http://localhost:5000/api/video/comment/${videoId}`, {
+        const res = await fetch(`/api/video/comment/${videoId}`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -1707,7 +1708,7 @@ async function deleteComment(commentId, videoData) {
     }
     
     try {
-        const res = await fetch(`http://localhost:5000/api/video/comment/${commentId}`, {
+        const res = await fetch(`/api/video/comment/${commentId}`, {
             method: "DELETE",
             headers: {
                 "Authorization": `Bearer ${token}`
@@ -1849,7 +1850,7 @@ function bindGlobalEvents(){
         
         try {
             const token = localStorage.getItem("cwatchToken");
-            const res = await fetch(`http://localhost:5000/api/user/${userId}/videos?page=1&page_size=100`, {
+            const res = await fetch(`/api/user/${userId}/videos?page=1&page_size=100`, {
                 headers: {
                     "Authorization": `Bearer ${token}`
                 }
@@ -1946,7 +1947,7 @@ function bindGlobalEvents(){
                     headers["Authorization"] = `Bearer ${token}`;
                 }
                 
-                const res = await fetch("http://localhost:5000/api/videos/hot", {
+                const res = await fetch("/api/videos/hot", {
                     method: "POST",
                     headers: headers,
                     body: JSON.stringify({ limit: 50 })
@@ -1991,7 +1992,7 @@ function bindGlobalEvents(){
                 const pageTitle = document.querySelector('.page__title');
                 const pageSubtitle = document.querySelector('.page__subtitle');
                 if (pageTitle) pageTitle.textContent = "🔥 热门视频";
-                if (pageSubtitle) pageSubtitle.textContent = `按点赞数排序 · 共 ${hotVideos.length} 个视频`;
+                if (pageSubtitle) pageSubtitle.textContent = `按累计点赞排序 · 每小时更新 · 共 ${hotVideos.length} 个视频`;
                 
                 // 隐藏管理按钮（如果存在）
                 const pageActions = document.getElementById("pageActions");
@@ -2150,7 +2151,7 @@ async function checkLoginStatus(){
     
     try {
         // 调用后端接口验证 token 是否有效（包括是否过期）
-        const res = await fetch("http://localhost:5000/api/user/info", {
+        const res = await fetch("/api/user/info", {
             method: "GET",
             headers: {
                 "Authorization": `Bearer ${token}`
@@ -2350,7 +2351,7 @@ el.loginForm.addEventListener("submit", async (e) => {
     
     try {
         // 调用后端登录接口
-        const res = await fetch("http://localhost:5000/api/login", {
+        const res = await fetch("/api/login", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
@@ -2369,7 +2370,7 @@ el.loginForm.addEventListener("submit", async (e) => {
         
         // 调用获取用户信息接口，获取完整的用户信息（包括头像）
         try {
-            const userInfoRes = await fetch("http://localhost:5000/api/user/info", {
+            const userInfoRes = await fetch("/api/user/info", {
                 method: "GET",
                 headers: {
                     "Authorization": `Bearer ${data.token}`
@@ -2449,7 +2450,7 @@ el.registerForm.addEventListener("submit", async (e) => {
     
     try {
         // 调用后端注册接口
-        const res = await fetch("http://localhost:5000/api/register", {
+        const res = await fetch("/api/register", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
@@ -2587,7 +2588,7 @@ el.dropdownLogout.addEventListener("click", async () => {
     
     try {
         // 调用后端登出接口
-        const res = await fetch("http://localhost:5000/api/logout", {
+        const res = await fetch("/api/logout", {
             method: "POST",
             headers: {
                 "Authorization": `Bearer ${token}`
@@ -2769,7 +2770,7 @@ async function uploadVideo() {
     
     try {
         // 1. 获取上传URL
-        const urlRes = await fetch("http://localhost:5000/api/video/upload-url", {
+        const urlRes = await fetch("/api/video/upload-url", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -2789,7 +2790,7 @@ async function uploadVideo() {
         
         const { upload_url, video_id } = await urlRes.json();
         
-        // 2. 上传文件到 MinIO
+        // 2. 上传文件
         el.uploadProgressText.textContent = "正在上传视频...";
         
         const xhr = new XMLHttpRequest();
@@ -2814,13 +2815,14 @@ async function uploadVideo() {
             };
             xhr.onerror = () => reject(new Error("网络错误"));
             xhr.open("PUT", upload_url);
+            xhr.setRequestHeader("Authorization", `Bearer ${token}`);
             xhr.send(state.uploadFile);
         });
         
         // 3. 通知后端上传完成
         el.uploadProgressText.textContent = "正在确认上传...";
         
-        const confirmRes = await fetch("http://localhost:5000/api/video/upload-complete", {
+        const confirmRes = await fetch("/api/video/upload-complete", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -3109,7 +3111,7 @@ async function batchDeleteVideos() {
             return;
         }
         
-        const res = await fetch("http://localhost:5000/api/videos/delete", {
+        const res = await fetch("/api/videos/delete", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -3143,7 +3145,7 @@ async function batchDeleteVideos() {
         const userId = state.currentUser?.id;
         if (userId) {
             const token = localStorage.getItem("cwatchToken");
-            const res = await fetch(`http://localhost:5000/api/user/${userId}/videos?page=1&page_size=100`, {
+            const res = await fetch(`/api/user/${userId}/videos?page=1&page_size=100`, {
                 headers: {
                     "Authorization": `Bearer ${token}`
                 }

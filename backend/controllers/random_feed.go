@@ -17,10 +17,13 @@ type RandomFeedNextRequest struct {
 // RandomFeedNext 获取随机 Feed 下一批（MVP：每次返回 3 条）
 // 认证：必须登录（AuthMiddleware）
 // 请求体：
-//   { "init": true }                       // 初始化：随机起点
-//   { "init": false, "page": 2 }         // 后续：从 page 开始扫描
+//
+//	{ "init": true }                       // 初始化：随机起点
+//	{ "init": false, "page": 2 }         // 后续：从 page 开始扫描
+//
 // 响应：
-//   { "videos": [...], "next_page": 3, "has_more": true }
+//
+//	{ "videos": [...], "next_page": 3, "has_more": true }
 func RandomFeedNext(c *gin.Context) {
 	username, exists := c.Get("username")
 	if !exists {
@@ -36,7 +39,7 @@ func RandomFeedNext(c *gin.Context) {
 		req.Page = 1
 	}
 
-	resp, err := randomFeedService.NextRandomFeed(usernameStr, req.Page, req.Init, 3)
+	resp, err := randomFeedService.NextRandomFeed(c.Request.Context(), usernameStr, req.Page, req.Init, 3)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -44,4 +47,3 @@ func RandomFeedNext(c *gin.Context) {
 
 	c.JSON(http.StatusOK, resp)
 }
-

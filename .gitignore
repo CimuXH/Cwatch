@@ -1,0 +1,17 @@
+/data/
+/compose/.env
+
+# Local development notes
+/优化方向.md
+/开发说明*.md
+/开发过程*.md
+/开发记录*.md
+
+# Credentials and local environment settings
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx

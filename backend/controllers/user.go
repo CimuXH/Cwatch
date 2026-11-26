@@ -5,7 +5,6 @@ import (
 	"backend/utils"
 	"github.com/gin-gonic/gin"
 	"net/http"
-	"time"
 )
 
 // 创建用户服务实例
@@ -46,7 +45,7 @@ func Register(c *gin.Context) {
 // Login 登录API
 // 请求：POST /api/login
 // Body: {"username": "test", "password": "123456"}
-// 返回：登录成功的消息、用户信息和JWT令牌
+// 返回：登录成功的消息、用户信息和会话令牌
 func Login(c *gin.Context) {
 	var req services.LoginRequest
 
@@ -75,17 +74,15 @@ func Login(c *gin.Context) {
 		"token":   user.Token,
 	})
 
-	// 将 token 保存到 Redis
-	_ = utils.SaveToken(user.Username, user.Token)
 }
 
-// GetUserInfo 获取用户信息API（需要JWT认证）
+// GetUserInfo 获取用户信息API（需要会话认证）
 // 请求：GET /api/user/info
 // Header: Authorization: Bearer <token>
 // 返回：用户信息
 func GetUserInfo(c *gin.Context) {
 	// 从上下文中获取用户名
-	// 这个值是由JWT中间件在验证令牌后设置的
+	// 这个值是由会话中间件在验证令牌后设置的
 	username, exists := c.Get("username")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -109,7 +106,7 @@ func GetUserInfo(c *gin.Context) {
 	})
 }
 
-// Logout 登出API（需要JWT认证）
+// Logout 登出API（需要会话认证）
 // 请求：POST /api/logout
 // Header: Authorization: Bearer <token>
 // 返回：登出成功的消息
@@ -123,20 +120,13 @@ func Logout(c *gin.Context) {
 		return
 	}
 
-	// 从上下文中获取用户名
-	username, _ := c.Get("username")
-
-	// 将 token 加入黑名单（设置过期时间为 24 小时）
-	err := utils.AddToBlacklist(token.(string), 24*time.Hour)
+	err := utils.RevokeSession(c.Request.Context(), token.(string))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "登出失败",
 		})
 		return
 	}
-
-	// 删除 Redis 中保存的用户 token
-	_ = utils.DeleteUserToken(username.(string))
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "登出成功",

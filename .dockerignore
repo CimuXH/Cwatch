@@ -1,0 +1,10 @@
+*
+!backend/
+!backend/**
+!web/
+!web/**
+!compose/
+!compose/Dockerfile
+!compose/Dockerfile.minio
+!compose/minio-init/
+!compose/minio-init/main.go
